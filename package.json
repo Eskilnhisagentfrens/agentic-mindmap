@@ -1,8 +1,8 @@
 {
-  "name": "mindmap",
-  "productName": "MindMap",
+  "name": "agentic-mindmap",
+  "productName": "Agentic Mindmap",
   "version": "0.1.0",
-  "description": "本地思维导图 - XMind 风格",
+  "description": "Agentic Mindmap - 可与 LLM agent 协同的本地思维导图（XMind 风格）",
   "main": "main.js",
   "author": "Eskil",
   "license": "MIT",
@@ -16,8 +16,8 @@
     "electron-builder": "^25.0.0"
   },
   "build": {
-    "appId": "com.eskil.mindmap",
-    "productName": "MindMap",
+    "appId": "com.eskil.agenticmindmap",
+    "productName": "Agentic Mindmap",
     "directories": {
       "output": "dist"
     },

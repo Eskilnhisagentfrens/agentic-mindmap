@@ -1,6 +1,6 @@
-# MindMap
+# Agentic Mindmap
 
-本地思维导图应用，XMind 风格。支持桌面（macOS Electron）和浏览器两种运行方式，数据完全保存在本地。
+可与 LLM agent 协同的本地思维导图应用，XMind 风格。支持桌面（macOS Electron）和浏览器两种运行方式，数据完全保存在本地。
 
 ## 运行
 
