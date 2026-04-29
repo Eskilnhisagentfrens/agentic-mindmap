@@ -1,198 +1,240 @@
 # Agentic Mindmap
 
-可与 LLM agent 协同的本地思维导图应用，XMind 风格。支持桌面（macOS Electron）和浏览器两种运行方式，数据完全保存在本地。
+**English** · [中文](./README.zh.md) · [日本語](./README.ja.md)
 
-## 运行
+A local, XMind-style mindmap that interoperates with LLM agents. Desktop (macOS Electron) and browser modes; **all data stays on your machine**.
 
-### macOS 桌面版（推荐）
+> 🤖 **AI Expand**: select any node, click 🤖 in the toolbar, and DeepSeek-reasoner generates 3–5 logical children for it (sub-tasks, sub-topics, key points). The child suggestions inherit the parent's language and avoid duplicating existing children.
 
-```bash
-cd ~/projects/mindmap
-npm install      # 首次运行
-npm start        # 启动
-```
+## Run
 
-打包成 `.dmg`：
+### macOS Desktop (recommended)
 
 ```bash
-npm run dist     # 产物在 dist/
+git clone https://github.com/Eskilnhisagentfrens/agentic-mindmap.git
+cd agentic-mindmap
+npm install      # first time
+npm start        # launch
 ```
 
-### 浏览器版
-
-直接双击 `index.html`，或：
+Build a `.dmg`:
 
 ```bash
-open ~/projects/mindmap/index.html
+npm run dist     # output in dist/
 ```
 
-手机上查看：把 `index.html` 通过 AirDrop / iCloud Drive 发到 iPhone，用 Safari 打开。已适配 iPhone 17 Pro 刘海和灵动岛。
+### Browser
 
-## 基本操作
+Just double-click `index.html`, or:
 
-### 键盘（桌面）
+```bash
+open index.html
+```
 
-| 操作 | 快捷键 |
+To view on a phone, AirDrop or iCloud-sync `index.html` to the device and open it in Safari. The layout is tuned for iPhone 17 Pro (Dynamic Island & notch).
+
+## Setting up AI Expand
+
+The 🤖 button needs an API key — either DeepSeek (recommended, ~30× cheaper) or Anthropic.
+
+**Option A: macOS Keychain (recommended; no shell history footprint):**
+
+```bash
+security add-generic-password -a "$USER" -s "DEEPSEEK_API_KEY" -w 'sk-...'
+```
+
+**Option B: environment variable (e.g. in `~/.zshrc`):**
+
+```bash
+export DEEPSEEK_API_KEY="$(security find-generic-password -a "$USER" -s DEEPSEEK_API_KEY -w)"
+# or for Anthropic users:
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+The app reads the key lazily inside the Electron main process. It never lands in `localStorage`, the renderer's memory, or shell history. See [docs/architecture.md](./docs/architecture.md) for the full security model.
+
+## Basic operations
+
+### Keyboard (desktop)
+
+| Action | Shortcut |
 | --- | --- |
-| 添加子节点 | `Tab` |
-| 添加同级节点 | `Enter` |
-| 编辑选中节点 | `F2` 或双击 |
-| 删除节点 | `Delete` / `Backspace` |
-| 方向键导航 | `← ↑ → ↓` |
-| 折叠 / 展开 | `Space` 或点击节点右侧圆点 |
-| 撤销 / 重做 | `⌘Z` / `⇧⌘Z` |
-| 搜索 | `⌘F`，`Enter` / `⇧Enter` 切换匹配 |
-| 适配视图 | `⌘0` |
-| 放大 / 缩小视图 | `⌘=` / `⌘-` 或滚轮 |
-| 放大 / 缩小节点（全局） | `⌘⇧=` / `⌘⇧-` |
-| 新建 | `⌘N` |
-| 打开 | `⌘O` |
-| 保存 JSON | `⌘S` |
-| 导出 Markdown | `⌘⇧E` |
-| 大纲视图 | `⌘⇧O` |
-| 全屏 | `⌃⌘F` |
-| 开发者工具 | `⌥⌘I` |
+| Add child node | `Tab` |
+| Add sibling | `Enter` |
+| Edit selected | `F2` or double-click |
+| Delete | `Delete` / `Backspace` |
+| Arrow navigation | `← ↑ → ↓` |
+| Collapse / expand | `Space` or click the dot on the right of a node |
+| Undo / redo | `⌘Z` / `⇧⌘Z` |
+| Search | `⌘F`, `Enter` / `⇧Enter` to cycle |
+| Fit to view | `⌘0` |
+| Zoom canvas | `⌘=` / `⌘-` or scroll |
+| Zoom node sizes | `⌘⇧=` / `⌘⇧-` |
+| New | `⌘N` |
+| Open | `⌘O` |
+| Save JSON | `⌘S` |
+| Export Markdown | `⌘⇧E` |
+| Outline view | `⌘⇧O` |
+| Fullscreen | `⌃⌘F` |
+| DevTools | `⌥⌘I` |
 
-### 鼠标 / 触摸
+### Mouse / touch
 
-- **拖拽节点**：
-  - 落在别的节点中部 → 成为其子节点
-  - 落在上 / 下边缘 → 作为前 / 后兄弟
-  - 落在空白处 → 自由定位（节点带绿色虚线框，整棵子树跟随）
-  - 拖拽过程中按 `Esc` 取消
-- **调整节点大小**（选中节点后出现手柄）：
-  - 右下角圆点 → 自由改宽高
-  - 右边竖条 → 只改宽度（文字自动换行）
-  - 下边横条 → 只改高度
-  - `Shift` + 拖右下角 → 等比缩放
-- **画布**：
-  - 滚轮 / 触控板双指 → 平移
-  - `⌘` + 滚轮 / 双指捏合 → 缩放
-  - 空白处按住拖动 → 平移画布
+- **Drag a node**:
+  - Drop in the middle of another → becomes its child
+  - Drop on the top / bottom edge → previous / next sibling
+  - Drop on empty space → free position (the whole subtree follows; green dashed outline)
+  - Press `Esc` mid-drag to cancel
+- **Resize a node** (handles appear when selected):
+  - Bottom-right dot → free width & height
+  - Right edge → width only (text wraps)
+  - Bottom edge → height only
+  - `Shift` + bottom-right → proportional
+- **Canvas**:
+  - Scroll / two-finger trackpad → pan
+  - `⌘` + scroll / pinch → zoom
+  - Drag empty space → pan canvas
 
 ### iPhone
 
-- 点击选中，双击 / 长按编辑
-- 底部工具栏：添加子节点、同级、图标、颜色、备注、删除
-- 双指捏合缩放，单指平移
-- 其他功能通过顶部工具栏
+- Tap to select; double-tap or long-press to edit
+- Bottom toolbar: add child, add sibling, icon, color, note, delete
+- Pinch to zoom, single-finger pan
+- Other features via the top toolbar
 
-## 进阶功能
+## Advanced features
 
-### 颜色与图标
+### Color & icons
 
-工具栏 🎨 给节点上色，12 色调色板。**子节点默认继承最近祖先的颜色**，连线颜色跟随分支。要让子节点用不同颜色，单独给它设色即可覆盖。
+Toolbar 🎨 colors a node with a 12-swatch palette. **Children inherit the nearest colored ancestor**, and edge colors follow the branch. To override on a child, set its color explicitly.
 
-工具栏 😀 加图标，24 个常用 emoji。
+Toolbar 😀 attaches an icon (24 common emoji).
 
-### 备注
+### Notes
 
-工具栏 📝 打开右下角备注面板，支持多行。有备注的节点右上角会显示蓝色小圆点。
+Toolbar 📝 opens a multiline note panel in the bottom-right. A small blue dot in the top-right of the node indicates a note is present.
 
-### 关系线 🔗
+### Relations 🔗
 
-跨节点连接（不走父子关系）。
-1. 选中起点节点 → 点 🔗
-2. 点击目标节点建立关系
-3. 双击关系线或标签 → 修改文字
-4. 单击选中，`Delete` 删除
-5. `Esc` 取消建立流程
+Cross-tree connections (independent of parent-child structure):
 
-### 概要 📎
+1. Select source node → click 🔗
+2. Click target node to create the relation
+3. Double-click the line or label to edit text
+4. Single-click to select, `Delete` to remove
+5. `Esc` cancels the creation flow
 
-给一组同级节点加大括号和总结文字。
-1. 选中一个节点 → 点 📎，为该节点父节点新建概要
-2. `Shift` + 点击同级兄弟 → 扩展覆盖范围
-3. 双击标签改文字
-4. 选中后 `Delete` 删除
+### Summary 📎
 
-### 外框 ⬚
+Adds a curly brace + summary text over a range of siblings.
 
-给某个分支加虚线彩色边框分组。选中节点 → 点 ⬚ 切换。颜色默认跟随节点颜色。
+1. Select a node → click 📎; the summary attaches to its parent
+2. `Shift`-click a sibling to extend the range
+3. Double-click the label to edit text
+4. Select + `Delete` removes it
 
-### 大纲视图 📋
+### Boundary ⬚
 
-左侧侧栏显示完整树结构，支持：
-- 点击行跳转到画布对应节点并居中
-- 双击行修改文字
-- 小三角折叠 / 展开
+Wraps a branch in a dashed colored frame. Select node → click ⬚ to toggle. Color follows the node by default.
 
-和画布双向同步。
+### Outline 📋
 
-### 布局
+Side panel showing the full tree:
+- Click a row to jump and center on that node
+- Double-click to edit text
+- Click the disclosure triangle to collapse / expand
 
-工具栏 🗺️ / 🌳 切换：
-- **中心放射**（默认）：根节点居中，子节点左右分布
-- **右侧树**：根节点在左，整棵树向右延伸
+Bidirectional sync with the canvas.
 
-### 搜索
+### Layouts
 
-`⌘F` 打开搜索框，实时匹配节点文字和备注。匹配项高亮发光，非匹配项淡出。`Enter` / `⇧Enter` 循环切换，`Esc` 关闭。跳转时自动展开折叠的祖先并平移到可见区域。
+Toolbar 🗺️ / 🌳 toggles:
+- **Radial** (default): root centered, children fan left and right
+- **Right tree**: root on the left, tree extends right
 
-## 文件格式
+### Search
 
-### JSON（无损）
+`⌘F` opens search; matches highlight while non-matches dim. `Enter` / `⇧Enter` cycles, `Esc` closes. Jumping auto-expands collapsed ancestors and pans the canvas.
 
-默认源格式，保留所有数据：结构、图标、颜色、备注、尺寸、位置偏移、关系线、概要、外框。
+## File formats
 
-`⌘S` 或 工具栏 💾 保存。
+### JSON (lossless)
 
-### Markdown（通用）
+Default source format. Preserves structure, icons, colors, notes, sizes, position offsets, relations, summaries, boundaries.
 
-用嵌套列表表达层级，兼容 Obsidian / Typora / GitHub。保留文字、图标、颜色、备注；**关系线 / 概要 / 外框 / 尺寸信息不导出**（保持格式通用）。
+`⌘S` or toolbar 💾 to save.
+
+### Markdown (portable)
+
+Nested lists for hierarchy. Compatible with Obsidian / Typora / GitHub. Preserves text, icons, colors, notes; **relations / summaries / boundaries / sizing are not exported** (kept format-portable).
 
 ```markdown
-# 🎯 中心主题 <!-- c:#89b4fa -->
+# 🎯 Root <!-- c:#89b4fa -->
 
-- 💡 分支一 <!-- c:#f9e2af -->
-  > 这里是备注
-  - 想法 A
-  - 想法 B
-- ⭐ 分支二
+- 💡 Branch A <!-- c:#f9e2af -->
+  > A note here
+  - Idea 1
+  - Idea 2
+- ⭐ Branch B
 ```
 
-规则：
-- `#` 开头 → 根节点
-- 缩进两格的 `-` / `*` / `+` → 子节点
-- 行首 emoji → 节点图标
-- 行末 HTML 注释 `<!-- c:#hex -->` → 节点颜色
-- `> ` 开头 → 节点备注
+Rules:
+- `#`-prefixed line → root
+- Indented `-` / `*` / `+` two spaces deep → child
+- Leading emoji → node icon
+- Trailing HTML comment `<!-- c:#hex -->` → node color
+- `> ` line → node note
 
-`⌘⇧E` 或 工具栏 📤 导出。
+`⌘⇧E` or toolbar 📤 to export.
 
-### 导出图片
+### Image export
 
-- 🖼️ **SVG**：矢量图，可任意放大，可再编辑
-- 📷 **PNG**：2× Retina 分辨率
+- 🖼️ **SVG**: vector, infinitely scalable, re-editable
+- 📷 **PNG**: 2× retina
 
-两者都包含节点、连线、颜色、外框、关系线、概要。
+Both include nodes, edges, colors, boundaries, relations, summaries.
 
-## 自动保存
+## Auto-save
 
-浏览器版：每次改动自动写入 `localStorage`，刷新不丢。
+Browser: every change writes to `localStorage`; refresh-safe.
 
-桌面版：同上，数据存在 `~/Library/Application Support/MindMap/Local Storage/`。想显式落盘到文件，`⌘S` 导出 JSON。
+Desktop: same, stored in `~/Library/Application Support/Agentic Mindmap/Local Storage/`. To explicitly persist to a file, `⌘S` exports JSON.
 
-## 项目结构
+## Project structure
 
 ```
-~/projects/mindmap/
-├── index.html      # 单文件 Web 应用（2300+ 行，含所有逻辑）
-├── main.js         # Electron 主进程，原生菜单 + 文件对话框
-├── preload.js      # IPC 桥接
+agentic-mindmap/
+├── index.html         # Single-file web app (~2600 lines, all renderer logic)
+├── main.js            # Electron main process — native menu, file dialogs, AI IPC
+├── preload.js         # IPC bridge
+├── docs/
+│   └── architecture.md  # AI Expand architecture & roadmap
 ├── package.json
-├── node_modules/   # Electron 依赖
-└── dist/           # npm run dist 的打包产物
+└── dist/              # Output of `npm run dist`
 ```
 
-## 重置 / 清空
+## Reset / clear
 
-- 工具栏 ✨ 新建：清空当前导图（会提示确认）
-- 工具栏 ⟲ 重置选中节点的自由位置、尺寸、缩放
-- 彻底清空数据：桌面版 `rm -rf ~/Library/Application\ Support/MindMap`；浏览器版 DevTools → Application → Local Storage 清除
+- Toolbar ✨ New: clears the current map (with confirmation)
+- Toolbar ⟲: resets the selected node's free position / size / scale
+- Full wipe: desktop `rm -rf "~/Library/Application Support/Agentic Mindmap"`; browser DevTools → Application → Local Storage → clear
 
-## 已知限制
+## Roadmap
 
-- MD 导入时会忽略不认识的语法
-- SVG / PNG 导出不包含 Emoji 字体（依赖系统字体渲染）
-- 桌面版第一次 `npm run dist` 会下载 ~150MB Electron 打包资源，耗时较久
+- [x] AI Expand button — generate children from any node via DeepSeek-reasoner
+- [ ] **MCP server** — expose mindmap as an MCP server so Claude Code / Desktop can read & write the canvas as a tool (no API spend, uses Max OAuth)
+- [ ] In-app chat sidebar with bidirectional sync
+- [ ] Streaming token-by-token responses for AI Expand
+- [ ] In-app Settings UI for API keys & model selection
+- [ ] AI mode selector (`brainstorm` / `plan` / `summarize`) per click
+
+## Known limitations
+
+- Markdown import ignores unrecognized syntax
+- SVG / PNG export does not embed emoji fonts (relies on system font rendering)
+- The first `npm run dist` downloads ~150 MB of Electron build assets
+- `npm run dist` produces unsigned DMGs; first launch needs `xattr -cr <app>` or right-click → Open
+
+## License
+
+MIT — see [LICENSE](./LICENSE).
