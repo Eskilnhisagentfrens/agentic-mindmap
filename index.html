@@ -170,6 +170,7 @@
     font-size: 18px; cursor: pointer; }
   .icon-btn:hover { background: var(--surface); }
 
+
   .outline-panel { position: absolute; left: 0; top: 0; bottom: 0; width: 280px; max-width: 80vw;
     background: var(--bg-elev); border-right: 1px solid var(--border); z-index: 35;
     display: flex; flex-direction: column; padding: 10px 4px 10px 10px;
@@ -219,9 +220,33 @@
 
   /* Toast */
   .toast { position: absolute; left: 50%; transform: translateX(-50%); bottom: 80px;
-    background: rgba(0,0,0,0.8); color: #fff; padding: 8px 16px; border-radius: 20px; font-size: 13px;
-    opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 100; }
+    background: rgba(0,0,0,0.85); color: #fff; padding: 10px 18px; border-radius: 14px; font-size: 13px;
+    opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 100;
+    max-width: min(560px, 90vw); text-align: center; line-height: 1.5; white-space: pre-line; }
   .toast.show { opacity: 1; }
+
+  /* AI progress overlay (shown during decompose request) */
+  .ai-progress { position: absolute; left: 50%; transform: translateX(-50%); bottom: 80px;
+    background: rgba(20,20,30,0.94); color: #fff; padding: 12px 18px; border-radius: 14px;
+    display: flex; align-items: center; gap: 12px; z-index: 110;
+    border: 1px solid var(--accent); box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+    max-width: min(520px, 90vw); }
+  .ai-progress.hidden { display: none; }
+  .ai-progress-icon { font-size: 24px; line-height: 1;
+    animation: ai-pulse 1.2s ease-in-out infinite; }
+  @keyframes ai-pulse {
+    0%, 100% { transform: scale(1);    opacity: 0.85; }
+    50%      { transform: scale(1.18); opacity: 1; }
+  }
+  .ai-progress-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+  .ai-progress-title { font-size: 13px; font-weight: 500; line-height: 1.3;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ai-progress-meta { font-size: 11px; color: var(--muted); display: flex; gap: 10px; align-items: center; }
+  .ai-progress-elapsed { font-variant-numeric: tabular-nums; color: var(--accent); font-weight: 600; min-width: 36px; }
+  .ai-progress-bar { width: 100%; height: 3px; background: rgba(255,255,255,0.08);
+    border-radius: 2px; overflow: hidden; margin-top: 4px; }
+  .ai-progress-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--node-color));
+    width: 0%; transition: width 0.2s linear; }
 
   /* Help modal */
   .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex;
@@ -283,7 +308,7 @@
     <button class="tb-btn" data-act="icon" title="图标"><span>😀</span><span class="tb-label">图标</span></button>
     <button class="tb-btn" data-act="color" title="颜色"><span>🎨</span><span class="tb-label">颜色</span></button>
     <button class="tb-btn" data-act="note" title="备注"><span>📝</span><span class="tb-label">备注</span></button>
-    <button class="tb-btn" data-act="ai-expand" title="AI 扩展子节点（用 LLM 生成 3-5 个子节点）"><span>🤖</span><span class="tb-label">AI 扩展</span></button>
+    <button class="tb-btn" data-act="ai-expand" title="AI 扩展子节点（选模式：头脑风暴 / 任务拆解 / 深入分析 / 对比 / 概念分解）"><span>🤖</span><span class="tb-label">AI 扩展</span></button>
     <span class="tb-sep"></span>
     <button class="tb-btn" data-act="size-down" title="缩小节点 (⌘⇧-)"><span style="font-weight:600">A-</span></button>
     <button class="tb-btn" data-act="size-up" title="放大节点 (⌘⇧+)"><span style="font-weight:600">A+</span></button>
@@ -355,6 +380,17 @@
     </aside>
 
     <div class="toast" id="toast"></div>
+    <div class="ai-progress hidden" id="ai-progress">
+      <div class="ai-progress-icon">🤖</div>
+      <div class="ai-progress-text">
+        <div class="ai-progress-title">正在分解「<span id="ai-progress-target"></span>」…</div>
+        <div class="ai-progress-meta">
+          <span class="ai-progress-elapsed" id="ai-progress-elapsed">0.0s</span>
+          <span id="ai-progress-phase">分析节点结构中</span>
+        </div>
+        <div class="ai-progress-bar"><div class="ai-progress-bar-fill" id="ai-progress-bar-fill"></div></div>
+      </div>
+    </div>
   </main>
 
   <nav class="mbar">
@@ -1081,37 +1117,115 @@ function pathToNode(targetId) {
 }
 
 let aiExpandInFlight = false;
-async function aiExpandSelected() {
-  if (aiExpandInFlight) { toast('AI 扩展进行中…'); return; }
+let aiProgressTimer = null;
+
+// Phases shown in the progress meter as elapsed time crosses thresholds.
+// They're approximations (we don't get real progress from the API) but they
+// match the typical timing shape for deepseek-reasoner: most of the latency is
+// reasoning, then a quick burst of token output at the end.
+const AI_PROGRESS_PHASES = [
+  { until: 1.5,  text: '分析节点结构中' },
+  { until: 3.5,  text: '判断分解深度中' },
+  { until: 6.5,  text: '生成子节点中' },
+  { until: 999,  text: '收尾打磨中' },
+];
+// Soft expected total — the bar reaches ~92% at this duration; if the request
+// takes longer it slows toward 100% asymptotically (so the bar never "fills"
+// before the result actually arrives).
+const AI_EXPECTED_SECONDS = 7;
+
+function showAIProgress(targetText) {
+  const el = document.getElementById('ai-progress');
+  document.getElementById('ai-progress-target').textContent = (targetText || '').slice(0, 40);
+  document.getElementById('ai-progress-elapsed').textContent = '0.0s';
+  document.getElementById('ai-progress-phase').textContent = AI_PROGRESS_PHASES[0].text;
+  document.getElementById('ai-progress-bar-fill').style.width = '0%';
+  el.classList.remove('hidden');
+  const start = performance.now();
+  clearInterval(aiProgressTimer);
+  aiProgressTimer = setInterval(() => {
+    const e = (performance.now() - start) / 1000;
+    document.getElementById('ai-progress-elapsed').textContent = e.toFixed(1) + 's';
+    const phase = AI_PROGRESS_PHASES.find(p => e < p.until) || AI_PROGRESS_PHASES[AI_PROGRESS_PHASES.length - 1];
+    document.getElementById('ai-progress-phase').textContent = phase.text;
+    // Asymptotic fill: 1 - exp(-t / k) — never reaches 100, slows past expected.
+    const pct = (1 - Math.exp(-e / (AI_EXPECTED_SECONDS / 2.4))) * 100;
+    document.getElementById('ai-progress-bar-fill').style.width = Math.min(pct, 96) + '%';
+  }, 100);
+}
+function hideAIProgress() {
+  clearInterval(aiProgressTimer);
+  aiProgressTimer = null;
+  // Snap to 100 briefly for visual completion, then hide.
+  const fill = document.getElementById('ai-progress-bar-fill');
+  if (fill) fill.style.width = '100%';
+  setTimeout(() => document.getElementById('ai-progress').classList.add('hidden'), 180);
+}
+
+async function aiSmartExpand() {
+  if (aiExpandInFlight) { toast('AI 分解进行中…'); return; }
   const r = getSelected();
   if (!r) { toast('请先选中一个节点'); return; }
   if (!window.electronAPI || !window.electronAPI.aiExpand) {
-    toast('AI 扩展仅在桌面版可用'); return;
+    toast('AI 分解仅在桌面版可用'); return;
   }
+
+  // Cousin context: children of selected node's siblings — same depth as the new
+  // children we're about to insert. Best style/granularity reference for the model.
+  const mySiblings = r.parent ? r.parent.children.filter(c => c.id !== r.node.id) : [];
+  const cousinTexts = mySiblings.flatMap(s => (s.children || []).map(c => c.text));
+  const parentSiblingTexts = mySiblings.map(s => s.text);
+
   aiExpandInFlight = true;
-  toast('🤖 AI 思考中…');
+  showAIProgress(r.node.text);
   try {
     const result = await window.electronAPI.aiExpand({
       text: r.node.text,
       pathFromRoot: pathToNode(r.node.id),
       existingChildren: (r.node.children || []).map(c => c.text),
+      cousinTexts,
+      parentSiblingTexts,
+      parentNote: r.parent ? (r.parent.note || '') : '',
+      selectedNote: r.node.note || '',
     });
-    if (result.error) { toast('AI 扩展失败：' + result.error); return; }
+    if (result.error) { toast('AI 分解失败：' + result.error); return; }
     const list = Array.isArray(result.children) ? result.children : [];
     if (!list.length) { toast('AI 没有给出建议'); return; }
+
     snapshot();
-    r.node.collapsed = false;
-    for (const item of list) {
-      const n = createNode(item.title);
-      if (item.note) n.note = item.note;
-      r.node.children.push(n);
+    // Recursively insert the subtree the model returned. Each item may have its
+    // own .children — we walk the whole tree, creating real nodes and using
+    // each item's "why" as the node's note (blue-dot indicator + the user's
+    // micro-lesson for why this child belongs here).
+    function insertSubtree(parentNode, items) {
+      parentNode.collapsed = false;
+      for (const item of items) {
+        const n = createNode(item.title);
+        if (item.why) n.note = item.why;
+        parentNode.children.push(n);
+        if (Array.isArray(item.children) && item.children.length) {
+          insertSubtree(n, item.children);
+        }
+      }
     }
+    insertSubtree(r.node, list);
     save(); render();
-    toast(`✅ 已添加 ${list.length} 个子节点（${result.model || ''}）`);
+
+    const kindLabel = result.detected_kind_label || result.detected_kind || '';
+    const approach  = result.approach || '';
+    const depth     = result.actual_depth || result.chosen_depth || 1;
+    const total     = result.total_nodes || list.length;
+    const rationale = result.depth_rationale || '';
+    const head      = (kindLabel ? `🤖 识别为「${kindLabel}」` : '🤖 已分解');
+    const body      = approach ? ` → ${approach}` : '';
+    const stats     = ` · ${depth} 层 / ${total} 个节点`;
+    const why       = rationale ? `\n${rationale}` : '';
+    toast(head + body + stats + why, 7000);
   } catch (err) {
-    toast('AI 扩展异常：' + (err && err.message || String(err)));
+    toast('AI 分解异常：' + (err && err.message || String(err)));
   } finally {
     aiExpandInFlight = false;
+    hideAIProgress();
   }
 }
 function addSibling() {
@@ -1194,10 +1308,12 @@ function applyIcon(i) {
   document.getElementById('icon-pop').classList.add('hidden');
 }
 
+const POPOVER_IDS = { color: 'color-pop', icon: 'icon-pop' };
 function showPopover(which) {
   const r = getSelected(); if (!r) { toast('请先选中一个节点'); return; }
   closeAllPopovers();
-  const pop = document.getElementById(which === 'color' ? 'color-pop' : 'icon-pop');
+  const pop = document.getElementById(POPOVER_IDS[which] || 'icon-pop');
+  if (!pop) return;
   const nodeEl = document.querySelector(`.node[data-id="${r.node.id}"]`);
   pop.classList.remove('hidden');
   // position near node (but within canvas)
@@ -1206,8 +1322,10 @@ function showPopover(which) {
     const cr = canvasEl.getBoundingClientRect();
     let x = nr.left - cr.left;
     let y = nr.bottom - cr.top + 6;
-    pop.style.left = Math.min(x, cr.width - 260) + 'px';
-    pop.style.top = Math.min(y, cr.height - 200) + 'px';
+    const popW = pop.offsetWidth || 280;
+    const popH = pop.offsetHeight || 220;
+    pop.style.left = Math.max(8, Math.min(x, cr.width - popW - 8)) + 'px';
+    pop.style.top  = Math.max(8, Math.min(y, cr.height - popH - 8)) + 'px';
   } else {
     pop.style.left = '80px'; pop.style.top = '80px';
   }
@@ -2263,7 +2381,7 @@ const ACTIONS = {
   'color': () => showPopover('color'),
   'note': openNote,
   'close-note': closeNote,
-  'ai-expand': aiExpandSelected,
+  'ai-expand': aiSmartExpand,
   'zoom-in': () => setZoom(state.viewport.scale * 1.15),
   'zoom-out': () => setZoom(state.viewport.scale / 1.15),
   'zoom-fit': zoomFit,
@@ -2525,11 +2643,11 @@ function setStatus(msg) {
   statusTimer = setTimeout(() => { s.textContent = '已就绪'; }, 2000);
 }
 let toastTimer;
-function toast(msg) {
+function toast(msg, durationMs) {
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 1800);
+  toastTimer = setTimeout(() => t.classList.remove('show'), durationMs || 1800);
 }
 
 // =========================================================================
