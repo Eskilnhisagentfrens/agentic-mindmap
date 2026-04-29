@@ -1,0 +1,36 @@
+{
+  "name": "mindmap",
+  "productName": "MindMap",
+  "version": "0.1.0",
+  "description": "本地思维导图 - XMind 风格",
+  "main": "main.js",
+  "author": "Eskil",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --mac"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.eskil.mindmap",
+    "productName": "MindMap",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        { "target": "dmg", "arch": ["arm64", "x64"] }
+      ]
+    }
+  }
+}
