@@ -78,14 +78,34 @@
     padding: calc(8px * var(--eff-scale)) calc(12px * var(--eff-scale));
     border-radius: 10px;
     background: var(--node-bg); border: 2px solid transparent;
-    display: inline-flex; align-items: center; gap: calc(6px * var(--eff-scale)); cursor: pointer;
+    display: inline-flex; flex-wrap: wrap; align-items: center; gap: calc(6px * var(--eff-scale)); cursor: pointer;
     box-shadow: 0 2px 6px rgba(0,0,0,0.25);
     color: var(--text);
     font-size: calc(14px * var(--eff-scale));
     line-height: 1.3; user-select: none; -webkit-user-select: none;
     word-break: break-word; overflow-wrap: anywhere; white-space: normal;
     transition: border-color .12s, box-shadow .12s, transform .08s;
+    max-width: calc(320px * var(--eff-scale));
   }
+  /* Inline note preview — shows the model's "why" right under the title so the
+     user sees specific numbers/entities without having to open the note panel. */
+  .node .note-preview {
+    flex-basis: 100%;
+    font-size: calc(11px * var(--eff-scale));
+    line-height: 1.45;
+    color: var(--muted);
+    font-weight: normal;
+    opacity: 0.92;
+    margin-top: calc(4px * var(--eff-scale));
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    cursor: pointer;
+    border-top: 1px dashed rgba(255,255,255,0.06);
+    padding-top: calc(4px * var(--eff-scale));
+  }
+  .node.selected .note-preview { color: var(--text); opacity: 1; }
   .node .text { word-break: break-word; overflow-wrap: anywhere; }
   .node:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.35); }
   .node.root { background: var(--root-bg); font-weight: 600;
@@ -299,7 +319,9 @@
     <button class="tb-btn" data-act="new" title="新建 (Cmd+N)"><span>✨</span><span class="tb-label">新建</span></button>
     <button class="tb-btn" data-act="import" title="导入 (MD/JSON)"><span>📥</span><span class="tb-label">导入</span></button>
     <button class="tb-btn" data-act="export-md" title="导出 Markdown"><span>📤</span><span class="tb-label">MD</span></button>
-    <button class="tb-btn" data-act="export-json" title="导出 JSON"><span>💾</span><span class="tb-label">JSON</span></button>
+    <button class="tb-btn" data-act="export-json" title="导出 JSON（本应用源格式）"><span>💾</span><span class="tb-label">JSON</span></button>
+    <button class="tb-btn" data-act="export-opml" title="导出 OPML（XMind / MindNode / Logseq 可再编辑）"><span>🌳</span><span class="tb-label">OPML</span></button>
+    <button class="tb-btn" data-act="export-pdf" title="导出 PDF (Cmd+P)"><span>📄</span><span class="tb-label">PDF</span></button>
     <span class="tb-sep"></span>
     <button class="tb-btn" data-act="add-child" title="添加子节点 (Tab)"><span>➕</span><span class="tb-label">子节点</span></button>
     <button class="tb-btn" data-act="add-sibling" title="添加兄弟节点 (Enter)"><span>↵</span><span class="tb-label">同级</span></button>
@@ -966,6 +988,12 @@ function renderNode(node, depth, inheritedColor) {
   const t = document.createElement('span'); t.className = 'text'; t.textContent = node.text; el.appendChild(t);
 
   if (node.note) {
+    const np = document.createElement('span');
+    np.className = 'note-preview';
+    np.textContent = node.note;
+    np.title = node.note;
+    el.appendChild(np);
+
     const n = document.createElement('span'); n.className = 'note-indicator'; n.textContent = '•'; n.title = node.note;
     el.appendChild(n);
   }
@@ -1983,6 +2011,10 @@ document.addEventListener('keydown', (e) => {
   if (mod && e.key === 'n') { e.preventDefault(); doNew(); return; }
   if (mod && e.key === 's') { e.preventDefault(); exportMD(); return; }
   if (mod && e.key === 'f') { e.preventDefault(); openSearch(); return; }
+  if (mod && e.key === 'p' && !e.shiftKey) { e.preventDefault(); exportPDF(); return; }
+  if (mod && e.key === 'c') { e.preventDefault(); copySelectedSubtree(); return; }
+  if (mod && e.key === 'v') { e.preventDefault(); pasteAsChildren(); return; }
+  if (mod && e.key === 'a') { e.preventDefault(); editSelectAll(); return; }
   if (mod && e.shiftKey && (e.key === 'l' || e.key === 'L')) { e.preventDefault(); openSnapshotModal(); return; }
 
   if (e.key === 'Tab') { e.preventDefault(); addChild(); }
@@ -2329,6 +2361,119 @@ function exportJSON() {
   download(name, JSON.stringify(state.root, null, 2), 'application/json');
   toast('已导出 ' + name);
 }
+
+// OPML — universal mindmap interchange format. XMind / MindNode / iThoughts /
+// OmniOutliner / Logseq / Workflowy can all import .opml and continue editing.
+function toOPML(root) {
+  function esc(s) {
+    return String(s || '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+  }
+  function outline(n, indent) {
+    const pad = '  '.repeat(indent);
+    // Use BOTH `_note` (most common attribute) and `note` (XMind variant) for max compat.
+    const noteAttr = n.note ? ` _note="${esc(n.note)}" note="${esc(n.note)}"` : '';
+    const text = (n.icon ? n.icon + ' ' : '') + (n.text || '');
+    if (!n.children || !n.children.length) {
+      return `${pad}<outline text="${esc(text)}"${noteAttr}/>`;
+    }
+    const open = `${pad}<outline text="${esc(text)}"${noteAttr}>`;
+    const kids = n.children.map(c => outline(c, indent + 1)).join('\n');
+    return `${open}\n${kids}\n${pad}</outline>`;
+  }
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head>
+    <title>${esc(root.text)}</title>
+    <dateCreated>${new Date().toUTCString()}</dateCreated>
+    <ownerName>Agentic Mindmap</ownerName>
+  </head>
+  <body>
+${outline(root, 2)}
+  </body>
+</opml>`;
+}
+function exportOPML() {
+  const name = (state.root.text || 'mindmap').replace(/\s+/g, '_') + '.opml';
+  download(name, toOPML(state.root), 'text/xml');
+  toast('已导出 ' + name + '（可在 XMind / MindNode / Logseq 中打开继续编辑）', 4000);
+}
+
+// ---------- Clipboard ops on selected subtree ----------
+function countNodes(n) { let c = 1; for (const k of n.children || []) c += countNodes(k); return c; }
+
+async function copySelectedSubtree() {
+  const r = getSelected(); if (!r) { toast('请先选中一个节点'); return; }
+  const md = toMarkdown(r.node);
+  try {
+    await navigator.clipboard.writeText(md);
+    const cnt = countNodes(r.node);
+    toast(cnt > 1 ? `已复制 ${cnt} 个节点（Markdown）到剪贴板` : '已复制节点文字');
+  } catch (err) {
+    toast('复制失败：' + err.message);
+  }
+}
+
+async function pasteAsChildren() {
+  const r = getSelected(); if (!r) { toast('请先选中一个节点'); return; }
+  let text;
+  try { text = await navigator.clipboard.readText(); }
+  catch (err) { toast('读取剪贴板失败：' + err.message); return; }
+  if (!text || !text.trim()) { toast('剪贴板为空'); return; }
+  let parsed;
+  try { parsed = parseMarkdown(text); }
+  catch (err) { toast('解析失败，剪贴板内容不是 Markdown 大纲'); return; }
+  if (!parsed) { toast('剪贴板内容无法解析为 mindmap'); return; }
+  // If the parsed root has children (i.e. user copied a real tree), append its children.
+  // If it's a flat single-line, treat the parsed root itself as one new child.
+  const toInsert = (parsed.children && parsed.children.length) ? parsed.children : [parsed];
+  snapshot();
+  r.node.collapsed = false;
+  for (const c of toInsert) {
+    (function fix(n) { if (!n.id) n.id = uid(); if (!Array.isArray(n.children)) n.children = []; n.children.forEach(fix); })(c);
+    r.node.children.push(c);
+  }
+  save(); render();
+  toast(`已粘贴 ${toInsert.length} 个分支`);
+}
+
+function editSelectAll() {
+  const r = getSelected(); if (!r) return;
+  startEdit(r.node.id);
+  // After editing starts, the .text element becomes contenteditable. Select all in next tick.
+  setTimeout(() => {
+    const el = document.querySelector(`.node[data-id="${r.node.id}"] .text`);
+    if (!el) return;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }, 0);
+}
+
+// PDF export — Electron path uses native printToPDF (vector). Browser falls
+// back to window.print() so the user can use macOS "Save as PDF" from the
+// print dialog.
+async function exportPDF() {
+  const name = (state.root.text || 'mindmap').replace(/\s+/g, '_');
+  if (!window.electronAPI || !window.electronAPI.exportPDF) {
+    toast('浏览器版：请用打印对话框「保存为 PDF」', 3000);
+    setTimeout(() => window.print(), 300);
+    return;
+  }
+  toast('正在导出 PDF…');
+  // Briefly fit-to-view so the rendered DOM captures the whole tree.
+  zoomFit();
+  await new Promise(r => setTimeout(r, 200));
+  const result = await window.electronAPI.exportPDF({ defaultName: name });
+  if (result && result.saved) {
+    toast('已导出 PDF：' + result.path.split('/').pop(), 4000);
+  } else if (result && result.error) {
+    toast('PDF 导出失败：' + result.error, 4000);
+  }
+}
 const fileInput = document.getElementById('file-input');
 function importFile() { fileInput.value = ''; fileInput.click(); }
 fileInput.addEventListener('change', (e) => {
@@ -2374,6 +2519,8 @@ const ACTIONS = {
   'import': importFile,
   'export-md': exportMD,
   'export-json': exportJSON,
+  'export-opml': exportOPML,
+  'export-pdf': exportPDF,
   'add-child': addChild,
   'add-sibling': addSibling,
   'delete': deleteSelected,
@@ -2703,6 +2850,8 @@ if (window.electronAPI) {
     'new': 'new',
     'save-json': 'export-json',
     'export-md': 'export-md',
+    'export-opml': 'export-opml',
+    'export-pdf': 'export-pdf',
     'export-svg': 'export-svg',
     'export-png': 'export-png',
     'zoom-in': 'zoom-in',
