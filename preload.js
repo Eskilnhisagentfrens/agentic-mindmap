@@ -10,4 +10,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveFile: (payload) => ipcRenderer.invoke('save-file', payload),
   writeBackup: (payload) => ipcRenderer.invoke('write-backup', payload),
   openBackupFolder: () => ipcRenderer.invoke('open-backup-folder'),
+  aiExpand: (payload) => ipcRenderer.invoke('ai-expand-node', payload),
 });

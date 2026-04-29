@@ -283,6 +283,7 @@
     <button class="tb-btn" data-act="icon" title="图标"><span>😀</span><span class="tb-label">图标</span></button>
     <button class="tb-btn" data-act="color" title="颜色"><span>🎨</span><span class="tb-label">颜色</span></button>
     <button class="tb-btn" data-act="note" title="备注"><span>📝</span><span class="tb-label">备注</span></button>
+    <button class="tb-btn" data-act="ai-expand" title="AI 扩展子节点（用 LLM 生成 3-5 个子节点）"><span>🤖</span><span class="tb-label">AI 扩展</span></button>
     <span class="tb-sep"></span>
     <button class="tb-btn" data-act="size-down" title="缩小节点 (⌘⇧-)"><span style="font-weight:600">A-</span></button>
     <button class="tb-btn" data-act="size-up" title="放大节点 (⌘⇧+)"><span style="font-weight:600">A+</span></button>
@@ -1061,6 +1062,57 @@ function addChild() {
   state.selectedId = n.id;
   save(); render();
   setTimeout(() => startEdit(n.id), 0);
+}
+
+// Build the path from root to the given node id, as an array of texts.
+function pathToNode(targetId) {
+  const path = [];
+  function walk(node) {
+    if (node.id === targetId) { path.push(node.text); return true; }
+    path.push(node.text);
+    for (const c of node.children || []) {
+      if (walk(c)) return true;
+    }
+    path.pop();
+    return false;
+  }
+  walk(state.root);
+  return path;
+}
+
+let aiExpandInFlight = false;
+async function aiExpandSelected() {
+  if (aiExpandInFlight) { toast('AI 扩展进行中…'); return; }
+  const r = getSelected();
+  if (!r) { toast('请先选中一个节点'); return; }
+  if (!window.electronAPI || !window.electronAPI.aiExpand) {
+    toast('AI 扩展仅在桌面版可用'); return;
+  }
+  aiExpandInFlight = true;
+  toast('🤖 AI 思考中…');
+  try {
+    const result = await window.electronAPI.aiExpand({
+      text: r.node.text,
+      pathFromRoot: pathToNode(r.node.id),
+      existingChildren: (r.node.children || []).map(c => c.text),
+    });
+    if (result.error) { toast('AI 扩展失败：' + result.error); return; }
+    const list = Array.isArray(result.children) ? result.children : [];
+    if (!list.length) { toast('AI 没有给出建议'); return; }
+    snapshot();
+    r.node.collapsed = false;
+    for (const item of list) {
+      const n = createNode(item.title);
+      if (item.note) n.note = item.note;
+      r.node.children.push(n);
+    }
+    save(); render();
+    toast(`✅ 已添加 ${list.length} 个子节点（${result.model || ''}）`);
+  } catch (err) {
+    toast('AI 扩展异常：' + (err && err.message || String(err)));
+  } finally {
+    aiExpandInFlight = false;
+  }
 }
 function addSibling() {
   const r = getSelected(); if (!r || !r.parent) { return addChild(); }
@@ -2211,6 +2263,7 @@ const ACTIONS = {
   'color': () => showPopover('color'),
   'note': openNote,
   'close-note': closeNote,
+  'ai-expand': aiExpandSelected,
   'zoom-in': () => setZoom(state.viewport.scale * 1.15),
   'zoom-out': () => setZoom(state.viewport.scale / 1.15),
   'zoom-fit': zoomFit,

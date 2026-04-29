@@ -2,6 +2,8 @@ const { app, BrowserWindow, Menu, dialog, shell, ipcMain } = require('electron')
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { execFileSync } = require('child_process');
+const Anthropic = require('@anthropic-ai/sdk');
 
 function backupDir() {
   const dir = path.join(os.homedir(), 'Documents', 'MindMap', 'backups');
@@ -161,6 +163,111 @@ ipcMain.handle('write-backup', async (_e, { name, content }) => {
 });
 
 ipcMain.handle('open-backup-folder', () => { shell.openPath(backupDir()); });
+
+// ===========================================================================
+//  AI: expand a mindmap node into children via DeepSeek (Anthropic-compat)
+// ===========================================================================
+
+function loadApiKey() {
+  // 1. Process env
+  if (process.env.DEEPSEEK_API_KEY) {
+    return { key: process.env.DEEPSEEK_API_KEY, source: 'env:DEEPSEEK_API_KEY', provider: 'deepseek' };
+  }
+  if (process.env.ANTHROPIC_API_KEY) {
+    return { key: process.env.ANTHROPIC_API_KEY, source: 'env:ANTHROPIC_API_KEY', provider: 'anthropic' };
+  }
+  // 2. macOS Keychain (silent if not found)
+  if (process.platform === 'darwin') {
+    for (const [service, provider] of [['DEEPSEEK_API_KEY', 'deepseek'], ['ANTHROPIC_API_KEY', 'anthropic']]) {
+      try {
+        const out = execFileSync('security', ['find-generic-password', '-a', os.userInfo().username, '-s', service, '-w'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+        const trimmed = String(out).trim();
+        if (trimmed) return { key: trimmed, source: `keychain:${service}`, provider };
+      } catch (_) { /* not in keychain, try next */ }
+    }
+  }
+  return null;
+}
+
+function buildClient() {
+  const auth = loadApiKey();
+  if (!auth) {
+    throw new Error('未找到 API key。请设置 DEEPSEEK_API_KEY 或 ANTHROPIC_API_KEY 环境变量，或存入 macOS Keychain。');
+  }
+  const opts = { apiKey: auth.key };
+  if (auth.provider === 'deepseek') {
+    opts.baseURL = 'https://api.deepseek.com/anthropic';
+  }
+  return { client: new Anthropic(opts), provider: auth.provider, source: auth.source };
+}
+
+const AI_SYSTEM_PROMPT = `You are an assistant inside a mindmap application. The user has selected one node and wants you to generate 3-5 logical children for it.
+
+Rules:
+- Each child should be a single short phrase (5-18 characters in Chinese, 2-8 words in English).
+- Children should be one level of granularity below the parent: sub-tasks if parent is a goal, sub-topics if parent is a topic, key points if parent is an argument.
+- Optionally include a one-sentence note (under 30 chars) for nuance; omit the field if not useful.
+- Match the language of the parent text (Chinese in → Chinese out).
+- Return STRICT JSON, no markdown fences, no commentary, no preamble:
+{"children": [{"title": "...", "note": "..."}, ...]}`;
+
+function stripFence(text) {
+  const t = String(text).trim();
+  const m = t.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```\s*$/);
+  return m ? m[1].trim() : t;
+}
+
+ipcMain.handle('ai-expand-node', async (_e, { text, pathFromRoot, existingChildren } = {}) => {
+  if (!text || typeof text !== 'string') {
+    return { error: 'invalid input: text required' };
+  }
+  let bundle;
+  try {
+    bundle = buildClient();
+  } catch (err) {
+    return { error: err.message };
+  }
+  const { client, provider } = bundle;
+
+  const model = provider === 'anthropic' ? 'claude-sonnet-4-6' : 'deepseek-reasoner';
+  const userParts = [
+    `Parent node: "${text}"`,
+    Array.isArray(pathFromRoot) && pathFromRoot.length > 1
+      ? `Path from root: ${pathFromRoot.join(' › ')}`
+      : null,
+    Array.isArray(existingChildren) && existingChildren.length
+      ? `Existing children (do NOT duplicate): ${existingChildren.map(s => `"${s}"`).join(', ')}`
+      : null,
+    'Generate 3-5 children.',
+  ].filter(Boolean).join('\n');
+
+  try {
+    const response = await client.messages.create({
+      model,
+      max_tokens: 1024,
+      system: AI_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: userParts }],
+    });
+    const textBlocks = (response.content || []).filter(b => b.type === 'text').map(b => b.text);
+    if (!textBlocks.length) return { error: 'empty response from model' };
+    const raw = textBlocks.join('\n');
+    let parsed;
+    try {
+      parsed = JSON.parse(stripFence(raw));
+    } catch (parseErr) {
+      return { error: 'model returned non-JSON: ' + raw.slice(0, 200) };
+    }
+    const children = Array.isArray(parsed.children) ? parsed.children : [];
+    const cleaned = children
+      .filter(c => c && typeof c.title === 'string' && c.title.trim())
+      .slice(0, 8)
+      .map(c => ({ title: c.title.trim(), note: typeof c.note === 'string' ? c.note.trim() : '' }));
+    if (!cleaned.length) return { error: 'no usable children in response' };
+    return { children: cleaned, model, provider };
+  } catch (err) {
+    return { error: (err && err.message) || String(err) };
+  }
+});
 
 ipcMain.handle('save-file', async (_event, { defaultName, content, filters }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
