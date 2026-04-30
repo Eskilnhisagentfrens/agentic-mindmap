@@ -1,7 +1,7 @@
 {
   "name": "agentic-mindmap",
   "productName": "Agentic Mindmap",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Agentic Mindmap - 可与 LLM agent 协同的本地思维导图（XMind 风格）",
   "main": "main.js",
   "author": "Eskil",

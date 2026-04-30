@@ -2,9 +2,23 @@
 
 **English** · [中文](./README.zh.md) · [日本語](./README.ja.md)
 
-A local, XMind-style mindmap that interoperates with LLM agents. Desktop (macOS Electron) and browser modes; **all data stays on your machine**.
+A local, XMind-style mindmap that **Claude can read, search, and expand** — local-first; your data never leaves your machine.
 
-> 🤖 **AI Expand**: select any node, click 🤖 in the toolbar, and the model auto-classifies the node, picks the best decomposition method, and chooses the depth (1–3 layers) based on complexity. Each generated child carries a one-sentence "why" explaining its role — visible inline on the canvas, no panel-opening required.
+<!-- TODO(v0.3.0): replace this paragraph with <p align="center"><img src="./docs/demo.gif" width="720" alt="Claude searching a local mindmap via MCP"></p> -->
+<p align="center"><em>📺 Demo gif lands with v0.3.0 — see <a href="./docs/demo-recording.md">recording recipe</a> to capture & contribute your own.</em></p>
+
+**Two flagship features:**
+
+- 🤖 **AI Expand** — select any node, click 🤖, and the model auto-classifies it, picks the best decomposition, and generates 3–8 children at depth 1–3 with a one-line "why" on each.
+- 🔌 **MCP plugin** — Claude Code / Desktop reads your live mindmap via three tools (`mindmap_get_state` / `mindmap_get_subtree` / `mindmap_search`). Uses your Claude Max OAuth → **$0 per query**. Read-only; mutations land in v0.4. ([plan](./docs/mcp-plan.md))
+
+**One-line install (Claude Code):**
+
+```
+/plugin install Eskilnhisagentfrens/agentic-mindmap
+```
+
+Other clients & manual config: see [Use with Claude Desktop / Code](#use-with-claude-desktop--code-mcp-read-only) below.
 
 ## Install
 
