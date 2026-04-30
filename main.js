@@ -68,6 +68,11 @@ function backupDir() {
   return dir;
 }
 
+// Path the MCP server reads. Matches mcp/server.js defaultSnapshotPath().
+function snapshotPath() {
+  return path.join(app.getPath('userData'), 'mcp-snapshot.json');
+}
+
 let mainWindow;
 
 function createWindow() {
@@ -287,6 +292,31 @@ ipcMain.handle('write-backup', async (_e, { name, content }) => {
 });
 
 ipcMain.handle('open-backup-folder', () => { shell.openPath(backupDir()); });
+
+// Renderer pushes the current tree on every save() so the MCP server (a
+// separate Node process spawned by an MCP host) can read live data.
+// Atomic write: temp file + rename, so readers never see a half-written file.
+ipcMain.handle('mindmap-snapshot', async (_e, payload = {}) => {
+  try {
+    const file = snapshotPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const body = JSON.stringify({
+      version: 1,
+      writtenAt: new Date().toISOString(),
+      appVersion: app.getVersion(),
+      layoutMode: payload.layoutMode || null,
+      nodeScale: typeof payload.nodeScale === 'number' ? payload.nodeScale : null,
+      root: payload.root || null,
+    });
+    const tmp = file + '.tmp';
+    fs.writeFileSync(tmp, body, 'utf8');
+    fs.renameSync(tmp, file);
+    return { ok: true, path: file };
+  } catch (err) {
+    log.error('mindmap-snapshot failed', err && err.message);
+    return { ok: false, error: err.message };
+  }
+});
 
 // Export current canvas to PDF via Electron's native printToPDF.
 // Renderer asks for an export, we open a save dialog, then printToPDF directly

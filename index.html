@@ -581,6 +581,14 @@ function save() {
       nodeScale: state.nodeScale, layoutMode: state.layoutMode,
     }));
     setStatus('已自动保存');
+    // Mirror to disk for the MCP server. Best-effort; never blocks UI.
+    if (window.electronAPI && window.electronAPI.pushSnapshot) {
+      window.electronAPI.pushSnapshot({
+        root: state.root,
+        layoutMode: state.layoutMode,
+        nodeScale: state.nodeScale,
+      }).catch(() => {});
+    }
   } catch (e) { console.warn('save failed', e); }
 }
 

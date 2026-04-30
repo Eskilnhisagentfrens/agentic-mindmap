@@ -229,12 +229,36 @@ agentic-mindmap/
 - [x] **Progress overlay** with live elapsed + phase + asymptotic bar
 - [x] **Logging & friendly errors** (electron-log + 9-case error mapping + Help menu reporting)
 
+### In progress
+- [~] **MCP server (read-only)** — `mcp/server.js` exposes `mindmap_get_state`, `mindmap_get_subtree`, `mindmap_search` over stdio. Claude Code / Desktop can browse the live canvas as a tool. See [docs/mcp-plan.md](./docs/mcp-plan.md). _Mutations land in Phase 2._
+
 ### Coming
-- [ ] **MCP server** — expose mindmap as an MCP server so Claude Code / Desktop can read & write the canvas as a tool (no API spend, uses Max OAuth)
+- [ ] **MCP server (mutations)** — `mindmap_add_node` / `mindmap_update_node` / `mindmap_delete_node` with live writeback to the renderer
 - [ ] In-app **Settings UI** for API keys, model selection, quality/speed presets
 - [ ] **Streaming** token-by-token responses for AI Expand
 - [ ] **App icon + code signing & notarization** (remove `xattr -cr` step)
 - [ ] In-app chat sidebar with bidirectional sync
+
+## Use with Claude Desktop / Code (MCP, read-only)
+
+The Electron app writes a snapshot of the current mindmap to `~/Library/Application Support/Agentic Mindmap/mcp-snapshot.json` on every save. The MCP server reads from there — the app does **not** need to be running, but the data is whatever was last saved.
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (or your Claude Code MCP config):
+
+```json
+{
+  "mcpServers": {
+    "agentic-mindmap": {
+      "command": "node",
+      "args": ["/absolute/path/to/agentic-mindmap/mcp/server.js"]
+    }
+  }
+}
+```
+
+Restart the host. Three tools should appear: `mindmap_get_state`, `mindmap_get_subtree`, `mindmap_search`.
+
+Override the snapshot location via `MINDMAP_SNAPSHOT_PATH` if needed.
 
 ## Known limitations
 

@@ -41,6 +41,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "electron-log": "^5.4.3"
   }
 }
