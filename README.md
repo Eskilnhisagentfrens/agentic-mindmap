@@ -243,7 +243,24 @@ agentic-mindmap/
 
 The Electron app writes a snapshot of the current mindmap to `~/Library/Application Support/Agentic Mindmap/mcp-snapshot.json` on every save. The MCP server reads from there — the app does **not** need to be running, but the data is whatever was last saved.
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (or your Claude Code MCP config):
+### Easiest: install as a Claude Code plugin (one shot — MCP + skill)
+
+This repo ships as a self-contained Claude Code plugin. Installing it wires up the MCP server **and** an `agentic-mindmap` skill that teaches Claude when to use the tools.
+
+```
+/plugin install Eskilnhisagentfrens/agentic-mindmap
+```
+
+After install, ask Claude any of:
+- "找一下我脑图里关于 MCP 的部分"
+- "Show me the AI Expand branch, 2 levels deep"
+- "How big is my mindmap right now?"
+
+The skill auto-routes to the right MCP tool (`mindmap_search` / `mindmap_get_subtree` / `mindmap_get_state`).
+
+### Alternative 1: manual MCP config (Claude Desktop)
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
@@ -256,9 +273,21 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (or you
 }
 ```
 
-Restart the host. Three tools should appear: `mindmap_get_state`, `mindmap_get_subtree`, `mindmap_search`.
+Fully quit Claude (`⌘Q`) and re-open. Three tools should appear: `mindmap_get_state`, `mindmap_get_subtree`, `mindmap_search`.
 
-Override the snapshot location via `MINDMAP_SNAPSHOT_PATH` if needed.
+### Alternative 2: one-line CLI register (Claude Code)
+
+```bash
+claude mcp add agentic-mindmap node /absolute/path/to/agentic-mindmap/mcp/server.js
+claude mcp list   # verify
+```
+
+### Snapshot location
+
+- macOS: `~/Library/Application Support/Agentic Mindmap/mcp-snapshot.json`
+- Linux: `~/.config/Agentic Mindmap/mcp-snapshot.json`
+- Windows: `%APPDATA%/Agentic Mindmap/mcp-snapshot.json`
+- Override: set `MINDMAP_SNAPSHOT_PATH` in the MCP server's environment.
 
 ## Known limitations
 

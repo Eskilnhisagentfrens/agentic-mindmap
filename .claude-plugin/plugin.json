@@ -1,0 +1,10 @@
+{
+  "name": "agentic-mindmap",
+  "description": "Read, search, and browse your local Agentic Mindmap from Claude Code / Desktop. Bundles the MCP server (mindmap_get_state / mindmap_get_subtree / mindmap_search) and a skill that teaches Claude when to use them.",
+  "author": {
+    "name": "Eskil",
+    "url": "https://github.com/Eskilnhisagentfrens/agentic-mindmap"
+  },
+  "homepage": "https://github.com/Eskilnhisagentfrens/agentic-mindmap",
+  "license": "MIT"
+}
