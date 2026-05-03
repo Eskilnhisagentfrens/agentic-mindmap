@@ -267,6 +267,14 @@
     border-radius: 2px; overflow: hidden; margin-top: 4px; }
   .ai-progress-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--node-color));
     width: 0%; transition: width 0.2s linear; }
+  /* Live streaming preview — last ~80 chars of the model's accumulating output */
+  .ai-progress-stream {
+    margin-top: 6px; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px; color: var(--muted); opacity: 0.9;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    line-height: 1.3; max-width: 100%;
+  }
+  .ai-progress-stream:empty { display: none; }
 
   /* Help modal */
   .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex;
@@ -330,7 +338,8 @@
     <button class="tb-btn" data-act="icon" title="图标"><span>😀</span><span class="tb-label">图标</span></button>
     <button class="tb-btn" data-act="color" title="颜色"><span>🎨</span><span class="tb-label">颜色</span></button>
     <button class="tb-btn" data-act="note" title="备注"><span>📝</span><span class="tb-label">备注</span></button>
-    <button class="tb-btn" data-act="ai-expand" title="AI 扩展子节点（选模式：头脑风暴 / 任务拆解 / 深入分析 / 对比 / 概念分解）"><span>🤖</span><span class="tb-label">AI 扩展</span></button>
+    <button class="tb-btn" data-act="ai-expand" title="AI 扩展（快速 · 一般 5-10 秒）"><span>🤖</span><span class="tb-label">AI 扩展</span></button>
+    <button class="tb-btn" data-act="ai-expand-deep" title="深度分解（reasoner，更高质量但 30-90 秒）"><span>🧠</span><span class="tb-label">深度</span></button>
     <span class="tb-sep"></span>
     <button class="tb-btn" data-act="size-down" title="缩小节点 (⌘⇧-)"><span style="font-weight:600">A-</span></button>
     <button class="tb-btn" data-act="size-up" title="放大节点 (⌘⇧+)"><span style="font-weight:600">A+</span></button>
@@ -411,6 +420,7 @@
           <span id="ai-progress-phase">分析节点结构中</span>
         </div>
         <div class="ai-progress-bar"><div class="ai-progress-bar-fill" id="ai-progress-bar-fill"></div></div>
+        <div class="ai-progress-stream" id="ai-progress-stream"></div>
       </div>
     </div>
   </main>
@@ -502,12 +512,6 @@ function defaultTree() {
   const root = createNode('中心主题');
   root.icon = '🎯';
   root.color = '#89b4fa';
-  const a = createNode('分支一');  a.icon = '💡'; a.color = '#f9e2af';
-  const b = createNode('分支二');  b.icon = '⭐'; b.color = '#a6e3a1';
-  const c = createNode('分支三');  c.icon = '🚀'; c.color = '#f38ba8';
-  a.children.push(createNode('想法 A'), createNode('想法 B'));
-  b.children.push(createNode('任务'));
-  root.children.push(a, b, c);
   return root;
 }
 
@@ -1154,51 +1158,81 @@ function pathToNode(targetId) {
 
 let aiExpandInFlight = false;
 let aiProgressTimer = null;
+let aiCurrentRequestId = null;
+let aiStreamUnsub = null;
 
-// Phases shown in the progress meter as elapsed time crosses thresholds.
-// They're approximations (we don't get real progress from the API) but they
-// match the typical timing shape for deepseek-reasoner: most of the latency is
-// reasoning, then a quick burst of token output at the end.
-const AI_PROGRESS_PHASES = [
-  { until: 1.5,  text: '分析节点结构中' },
-  { until: 3.5,  text: '判断分解深度中' },
-  { until: 6.5,  text: '生成子节点中' },
-  { until: 999,  text: '收尾打磨中' },
-];
-// Soft expected total — the bar reaches ~92% at this duration; if the request
-// takes longer it slows toward 100% asymptotically (so the bar never "fills"
-// before the result actually arrives).
-const AI_EXPECTED_SECONDS = 7;
+// Phase labels by mode. With true streaming the bar advances on real tokens,
+// so phase text is just an honest "what the model is doing right now" hint.
+const AI_PROGRESS_PHASES = {
+  fast: [
+    { until: 0.8, text: '请求中' },
+    { until: 2.5, text: '生成结构中' },
+    { until: 999, text: '收尾打磨中' },
+  ],
+  quality: [
+    { until: 2.0,  text: '分析节点结构中' },
+    { until: 6.0,  text: '推理深度判断中' },
+    { until: 14.0, text: '生成子节点中' },
+    { until: 999,  text: '收尾打磨中' },
+  ],
+};
+// Soft expected total per mode — bar reaches ~92% at this duration, then slows
+// asymptotically toward 100% so it never "fills" before the response lands.
+const AI_EXPECTED_SECONDS = { fast: 6, quality: 22 };
 
-function showAIProgress(targetText) {
+function showAIProgress(targetText, mode) {
+  const m = mode === 'quality' ? 'quality' : 'fast';
+  const phases = AI_PROGRESS_PHASES[m];
+  const expected = AI_EXPECTED_SECONDS[m];
   const el = document.getElementById('ai-progress');
+  const iconEl = el.querySelector('.ai-progress-icon');
+  if (iconEl) iconEl.textContent = m === 'quality' ? '🧠' : '🤖';
   document.getElementById('ai-progress-target').textContent = (targetText || '').slice(0, 40);
   document.getElementById('ai-progress-elapsed').textContent = '0.0s';
-  document.getElementById('ai-progress-phase').textContent = AI_PROGRESS_PHASES[0].text;
+  document.getElementById('ai-progress-phase').textContent = phases[0].text;
   document.getElementById('ai-progress-bar-fill').style.width = '0%';
+  document.getElementById('ai-progress-stream').textContent = '';
   el.classList.remove('hidden');
   const start = performance.now();
   clearInterval(aiProgressTimer);
   aiProgressTimer = setInterval(() => {
     const e = (performance.now() - start) / 1000;
     document.getElementById('ai-progress-elapsed').textContent = e.toFixed(1) + 's';
-    const phase = AI_PROGRESS_PHASES.find(p => e < p.until) || AI_PROGRESS_PHASES[AI_PROGRESS_PHASES.length - 1];
+    const phase = phases.find(p => e < p.until) || phases[phases.length - 1];
     document.getElementById('ai-progress-phase').textContent = phase.text;
-    // Asymptotic fill: 1 - exp(-t / k) — never reaches 100, slows past expected.
-    const pct = (1 - Math.exp(-e / (AI_EXPECTED_SECONDS / 2.4))) * 100;
+    const pct = (1 - Math.exp(-e / (expected / 2.4))) * 100;
     document.getElementById('ai-progress-bar-fill').style.width = Math.min(pct, 96) + '%';
   }, 100);
 }
 function hideAIProgress() {
   clearInterval(aiProgressTimer);
   aiProgressTimer = null;
-  // Snap to 100 briefly for visual completion, then hide.
   const fill = document.getElementById('ai-progress-bar-fill');
   if (fill) fill.style.width = '100%';
-  setTimeout(() => document.getElementById('ai-progress').classList.add('hidden'), 180);
+  setTimeout(() => {
+    document.getElementById('ai-progress').classList.add('hidden');
+    document.getElementById('ai-progress-stream').textContent = '';
+  }, 180);
 }
 
-async function aiSmartExpand() {
+// Subscribe once at boot. Stream events update the live tail under the bar.
+// We filter by requestId so a stale event from a cancelled request can never
+// overwrite a fresh one.
+function setupAIStream() {
+  if (!window.electronAPI || !window.electronAPI.onAIStream) return;
+  if (aiStreamUnsub) aiStreamUnsub();
+  aiStreamUnsub = window.electronAPI.onAIStream((event) => {
+    if (!event || event.requestId !== aiCurrentRequestId) return;
+    const tail = String(event.tail || '');
+    // Strip noisy whitespace; keep last ~80 visible characters.
+    const compact = tail.replace(/\s+/g, ' ').trim().slice(-80);
+    const el = document.getElementById('ai-progress-stream');
+    if (el) el.textContent = compact ? '…' + compact : '';
+  });
+}
+
+async function aiSmartExpand(modeArg) {
+  const mode = modeArg === 'quality' ? 'quality' : 'fast';
   if (aiExpandInFlight) { toast('AI 分解进行中…'); return; }
   const r = getSelected();
   if (!r) { toast('请先选中一个节点'); return; }
@@ -1212,10 +1246,13 @@ async function aiSmartExpand() {
   const cousinTexts = mySiblings.flatMap(s => (s.children || []).map(c => c.text));
   const parentSiblingTexts = mySiblings.map(s => s.text);
 
+  aiCurrentRequestId = String(Date.now()) + '-' + Math.random().toString(36).slice(2, 8);
   aiExpandInFlight = true;
-  showAIProgress(r.node.text);
+  showAIProgress(r.node.text, mode);
   try {
     const result = await window.electronAPI.aiExpand({
+      requestId: aiCurrentRequestId,
+      mode,
       text: r.node.text,
       pathFromRoot: pathToNode(r.node.id),
       existingChildren: (r.node.children || []).map(c => c.text),
@@ -1229,10 +1266,6 @@ async function aiSmartExpand() {
     if (!list.length) { toast('AI 没有给出建议'); return; }
 
     snapshot();
-    // Recursively insert the subtree the model returned. Each item may have its
-    // own .children — we walk the whole tree, creating real nodes and using
-    // each item's "why" as the node's note (blue-dot indicator + the user's
-    // micro-lesson for why this child belongs here).
     function insertSubtree(parentNode, items) {
       parentNode.collapsed = false;
       for (const item of items) {
@@ -1247,20 +1280,23 @@ async function aiSmartExpand() {
     insertSubtree(r.node, list);
     save(); render();
 
-    const kindLabel = result.detected_kind_label || result.detected_kind || '';
-    const approach  = result.approach || '';
-    const depth     = result.actual_depth || result.chosen_depth || 1;
-    const total     = result.total_nodes || list.length;
-    const rationale = result.depth_rationale || '';
-    const head      = (kindLabel ? `🤖 识别为「${kindLabel}」` : '🤖 已分解');
-    const body      = approach ? ` → ${approach}` : '';
-    const stats     = ` · ${depth} 层 / ${total} 个节点`;
-    const why       = rationale ? `\n${rationale}` : '';
+    const kindLabel  = result.detected_kind_label || result.detected_kind || '';
+    const approach   = result.approach || '';
+    const depth      = result.actual_depth || result.chosen_depth || 1;
+    const total      = result.total_nodes || list.length;
+    const rationale  = result.depth_rationale || '';
+    const elapsedSec = result.elapsedMs ? (result.elapsedMs / 1000).toFixed(1) : null;
+    const modeIcon   = result.mode === 'quality' ? '🧠' : '🤖';
+    const head       = kindLabel ? `${modeIcon} 识别为「${kindLabel}」` : `${modeIcon} 已分解`;
+    const body       = approach ? ` → ${approach}` : '';
+    const stats      = ` · ${depth} 层 / ${total} 节点` + (elapsedSec ? ` · ${elapsedSec}s` : '');
+    const why        = rationale ? `\n${rationale}` : '';
     toast(head + body + stats + why, 7000);
   } catch (err) {
     toast('AI 分解异常：' + (err && err.message || String(err)));
   } finally {
     aiExpandInFlight = false;
+    aiCurrentRequestId = null;
     hideAIProgress();
   }
 }
@@ -2536,7 +2572,8 @@ const ACTIONS = {
   'color': () => showPopover('color'),
   'note': openNote,
   'close-note': closeNote,
-  'ai-expand': aiSmartExpand,
+  'ai-expand': () => aiSmartExpand('fast'),
+  'ai-expand-deep': () => aiSmartExpand('quality'),
   'zoom-in': () => setZoom(state.viewport.scale * 1.15),
   'zoom-out': () => setZoom(state.viewport.scale / 1.15),
   'zoom-fit': zoomFit,
@@ -2811,6 +2848,7 @@ function toast(msg, durationMs) {
 loadStored();
 ensureSelected();
 buildPopovers();
+setupAIStream();
 { // initial layout button sync
   const ic = document.getElementById('layout-icon');
   const lb = document.getElementById('layout-label');

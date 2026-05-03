@@ -11,6 +11,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   writeBackup: (payload) => ipcRenderer.invoke('write-backup', payload),
   openBackupFolder: () => ipcRenderer.invoke('open-backup-folder'),
   aiExpand: (payload) => ipcRenderer.invoke('ai-expand-node', payload),
+  onAIStream: (handler) => {
+    const wrapped = (_e, event) => handler(event);
+    ipcRenderer.on('ai-stream', wrapped);
+    // Return an unsubscribe so the renderer can clean up if it ever needs to.
+    return () => ipcRenderer.removeListener('ai-stream', wrapped);
+  },
   exportPDF: (payload) => ipcRenderer.invoke('export-pdf', payload),
   pushSnapshot: (payload) => ipcRenderer.invoke('mindmap-snapshot', payload),
 });

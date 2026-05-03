@@ -481,6 +481,14 @@ function stripFence(text) {
   return m ? m[1].trim() : t;
 }
 
+// Model routing by speed/quality mode. 'fast' favors snappy general-purpose
+// models (~5-10s typical); 'quality' uses reasoning-class models that take
+// 30-90s but reach deeper for complex topics.
+const MODEL_BY_MODE = {
+  fast:    { deepseek: 'deepseek-chat',     anthropic: 'claude-haiku-4-5'   },
+  quality: { deepseek: 'deepseek-reasoner', anthropic: 'claude-sonnet-4-6' },
+};
+
 ipcMain.handle('ai-expand-node', async (_e, payload = {}) => {
   const startedAt = Date.now();
   const {
@@ -491,9 +499,15 @@ ipcMain.handle('ai-expand-node', async (_e, payload = {}) => {
     parentSiblingTexts,
     parentNote,
     selectedNote,
+    mode,
+    requestId,
   } = payload;
+  const resolvedMode = mode === 'quality' ? 'quality' : 'fast';
+  const reqId = String(requestId || Date.now());
 
   log.info('ai-expand-node start', {
+    requestId: reqId,
+    mode: resolvedMode,
     textPreview: typeof text === 'string' ? text.slice(0, 60) : null,
     pathDepth: Array.isArray(pathFromRoot) ? pathFromRoot.length : 0,
     cousinCount: Array.isArray(cousinTexts) ? cousinTexts.length : 0,
@@ -516,9 +530,9 @@ ipcMain.handle('ai-expand-node', async (_e, payload = {}) => {
     return { error: f.user, code: f.code };
   }
   const { client, provider, source } = bundle;
-  log.info('ai-expand-node client built', { provider, source });
-
-  const model = provider === 'anthropic' ? 'claude-sonnet-4-6' : 'deepseek-reasoner';
+  const model = (MODEL_BY_MODE[resolvedMode] && MODEL_BY_MODE[resolvedMode][provider])
+    || (provider === 'anthropic' ? 'claude-sonnet-4-6' : 'deepseek-reasoner');
+  log.info('ai-expand-node client built', { provider, source, mode: resolvedMode, model });
 
   // Cousin context (children of selected's siblings) is the same depth as the new
   // children — best style reference. Fall back to parent's siblings if absent.
@@ -581,15 +595,56 @@ ipcMain.handle('ai-expand-node', async (_e, payload = {}) => {
   }
 
   try {
-    const response = await client.messages.create({
+    // Streaming: forward token deltas to the renderer for live progress UI.
+    // We throttle webContents.send to ~10 Hz so the UI doesn't get flooded.
+    const stream = client.messages.stream({
       model,
       max_tokens: 12000,
       system: SMART_DECOMPOSE_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userParts }],
     });
-    const textBlocks = (response.content || []).filter(b => b.type === 'text').map(b => b.text);
+
+    let accumulated = '';
+    let firstTokenAt = 0;
+    let lastSentAt = 0;
+    const SEND_INTERVAL_MS = 100;
+
+    for await (const event of stream) {
+      if (event.type === 'content_block_delta' && event.delta && event.delta.type === 'text_delta') {
+        const piece = event.delta.text || '';
+        accumulated += piece;
+        if (!firstTokenAt) {
+          firstTokenAt = Date.now();
+          log.info('ai-expand-node first-token', { ms: firstTokenAt - startedAt, mode: resolvedMode });
+        }
+        const now = Date.now();
+        if (now - lastSentAt >= SEND_INTERVAL_MS && mainWindow && !mainWindow.isDestroyed()) {
+          lastSentAt = now;
+          mainWindow.webContents.send('ai-stream', {
+            requestId: reqId,
+            tail: accumulated.slice(-220),
+            chars: accumulated.length,
+            elapsedMs: now - startedAt,
+          });
+        }
+      }
+    }
+
+    const finalMessage = await stream.finalMessage();
+    // Emit one final tail update so the UI can settle on the actual end-of-stream content.
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('ai-stream', {
+        requestId: reqId,
+        tail: accumulated.slice(-220),
+        chars: accumulated.length,
+        elapsedMs: Date.now() - startedAt,
+        done: true,
+      });
+    }
+
+    const textBlocks = (finalMessage.content || []).filter(b => b.type === 'text').map(b => b.text);
     if (!textBlocks.length) {
-      log.error('ai-expand-node empty response', { stop_reason: response.stop_reason });
+      log.error('ai-expand-node empty response', { stop_reason: finalMessage.stop_reason });
       const f = friendlyError('empty response from model');
       return { error: f.user, code: f.code };
     }
@@ -597,7 +652,7 @@ ipcMain.handle('ai-expand-node', async (_e, payload = {}) => {
 
     // Detect token-budget truncation BEFORE attempting JSON parse so the
     // error surfaced to the user is actionable instead of "non-JSON".
-    if (response.stop_reason === 'max_tokens') {
+    if (finalMessage.stop_reason === 'max_tokens') {
       log.error('ai-expand-node truncated by max_tokens', { rawTail: raw.slice(-200), rawLen: raw.length });
       return {
         error: 'AI 输出过长被截断（达到 max_tokens 上限）。请缩小话题范围、清理父节点的备注，或重试一次。',
@@ -610,7 +665,7 @@ ipcMain.handle('ai-expand-node', async (_e, payload = {}) => {
       parsed = JSON.parse(stripFence(raw));
     } catch (parseErr) {
       log.error('ai-expand-node non-JSON', {
-        stop_reason: response.stop_reason,
+        stop_reason: finalMessage.stop_reason,
         rawLen: raw.length,
         rawHead: raw.slice(0, 300),
         rawTail: raw.slice(-200),
@@ -643,6 +698,8 @@ ipcMain.handle('ai-expand-node', async (_e, payload = {}) => {
       elapsedMs,
       provider,
       model,
+      mode: resolvedMode,
+      firstTokenMs: firstTokenAt ? firstTokenAt - startedAt : null,
       detected_kind: parsed.detected_kind,
       chosen_depth: parsed.chosen_depth,
       actual_depth: depths,
@@ -660,6 +717,9 @@ ipcMain.handle('ai-expand-node', async (_e, payload = {}) => {
       total_nodes: total,
       model,
       provider,
+      mode: resolvedMode,
+      elapsedMs,
+      firstTokenMs: firstTokenAt ? firstTokenAt - startedAt : null,
     };
   } catch (err) {
     const elapsedMs = Date.now() - startedAt;
