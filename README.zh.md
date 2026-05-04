@@ -2,9 +2,12 @@
 
 [English](./README.md) · **中文** · [日本語](./README.ja.md)
 
-可与 LLM agent 协同的本地思维导图应用，XMind 风格。支持桌面（macOS Electron）和浏览器两种运行方式，**数据完全保存在本地**。
+本地思维导图应用，**Claude 能直接读、搜、编辑**——XMind 风格、本地优先，数据不出你的电脑。
 
-> 🤖 **AI 扩展**：选中任意节点，点击工具栏 🤖，模型会自动识别节点类型、选择最合适的分解方法，并根据复杂度决定深度（1-3 层）。每个生成的子节点都附带一句 why 说明它的角色——直接显示在画布上，不用打开备注面板。
+**两个旗舰能力：**
+
+- 🤖 **AI 扩展** —— 选中任意节点，点 🤖（快速）或 🧠（深度），模型自动识别节点类型、选最合适的分解方法、按复杂度选 1-3 层深度。每个子节点带一句 why 直接显示在画布上。
+- 🔌 **MCP 插件** —— Claude Code / Desktop **既能读也能写**你的脑图，共 8 个工具。读（`mindmap_get_state` / `mindmap_get_subtree` / `mindmap_search`）不依赖 app 是否打开。写（`mindmap_add_node` / `mindmap_update_node` / `mindmap_delete_node` / `mindmap_move_node` / `mindmap_ai_expand`）需要 app 在跑，且会进入用户的 undo 历史（⌘Z 回退任何 Claude 操作）。走 Claude Max OAuth → **每次调用 $0**。
 
 ## 安装
 
@@ -220,19 +223,23 @@ agentic-mindmap/
 
 ## 路线图
 
+### v0.4.0 已完成
+- [x] **MCP write tools** —— `mindmap_add_node` / `mindmap_update_node` / `mindmap_delete_node` / `mindmap_move_node` / `mindmap_ai_expand`，Claude **真能编辑你的脑图**。改动通过 localhost HTTP（per-launch token + 0600 control file）下发，走用户正常的撤销历史，⌘Z 回退任何 Claude 操作。
+
+### v0.3.x 已完成
+- [x] **MCP read tools** —— `mindmap_get_state` / `mindmap_get_subtree` / `mindmap_search`（app 不开也能读）
+- [x] **流式 AI 扩展** —— token 边出边显示在进度卡片下方
+- [x] **快速/深度模式** —— 🤖（chat/haiku，~5-10s）vs 🧠（reasoner/sonnet，~30-90s）
+- [x] **干净的默认树** —— 单节点起点，无预置分支
+- [x] **DMG 含 MCP 插件文件** —— `mcp/`、`.mcp.json`、`.claude-plugin/`、`skills/` 全在 `Contents/Resources/`
+
 ### v0.2.0 已完成
 - [x] **AI 扩展** —— 单按钮智能分解（自动识别 + 深度 1-3 + 同级感知 + 每节点 why）
-- [x] **PDF 导出**（矢量、⌘P）
-- [x] **OPML 导出**（XMind / MindNode / Logseq 可继续编辑）
-- [x] **剪贴板操作**（⌘C 子树为 MD / ⌘V MD 为子节点 / ⌘A 编辑全选）
-- [x] **画布内联备注预览**
-- [x] **进度浮层** 带实时计时 + 阶段 + 渐近进度条
-- [x] **日志 + 友好错误**（electron-log + 9 类错误映射 + Help 菜单报告）
+- [x] **PDF / OPML 导出** + 剪贴板（⌘C/⌘V/⌘A）+ 画布内联备注预览 + 日志和友好错误
 
 ### 即将推出
-- [ ] **MCP server** —— 把 mindmap 暴露为 MCP server，Claude Code / Desktop 直接当 tool 读写画布（不消耗 API，走 Max OAuth）
+- [ ] **MCP Phase 3** —— 服务器主动推送 `notifications/resources/updated`，用户端编辑实时通知 host；`mindmap_ai_expand` 流式
 - [ ] 应用内 **设置面板** —— API key、模型选择、质量/速度预设
-- [ ] AI 扩展 **流式输出**（token-by-token）
 - [ ] **App 图标 + 代码签名**（去掉 `xattr -cr` 这一步）
 - [ ] 应用内 chat 侧边栏，与导图双向同步
 

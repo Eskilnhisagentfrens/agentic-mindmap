@@ -1,6 +1,6 @@
 # MCP Server — Implementation Plan
 
-Status: **Phase 1 (read-only) in progress** — see `mcp/server.js`.
+Status: **Phase 1 (read-only) shipped in v0.3.0**, **Phase 2 (mutations) shipped in v0.4.0**. Phase 3 (live bidirectional sync) still future.
 
 ## Goal
 
@@ -85,25 +85,45 @@ Phase 1 is satisfied when:
 2. The Electron app writes a fresh `mcp-snapshot.json` on every `save()`.
 3. Adding the server to `~/Library/Application Support/Claude/claude_desktop_config.json` exposes the three tools in Claude Desktop.
 
-## Phase 2 — mutations (future)
+## Phase 2 — mutations (shipped in v0.4.0)
 
 | Tool | Args |
 |---|---|
-| `mindmap_add_node` | `{ parentId, text, icon?, note?, position? }` |
+| `mindmap_add_node` | `{ parentId, text, icon?, note?, color?, position? }` |
 | `mindmap_update_node` | `{ id, text?, icon?, color?, note?, collapsed? }` |
-| `mindmap_delete_node` | `{ id }` |
-| `mindmap_set_status` | `{ id, status }` (status as a structured field, TBD) |
-| `mindmap_ai_expand` | rename of existing `ai-expand-node` IPC |
+| `mindmap_delete_node` | `{ id }` — deletes the subtree |
+| `mindmap_move_node` | `{ id, newParentId, position? }` — refuses cycles |
+| `mindmap_ai_expand` | `{ nodeId, mode? }` — `fast` (default, ~5-10s) or `quality` (~30-90s) |
 
-Mutations need:
-- A live channel back to the renderer so changes appear immediately. Options:
-  - **(a) HTTP localhost** — main starts a `127.0.0.1:NNNN` server on app launch; MCP server POSTs commands. Simple, no IPC across processes.
-  - **(b) Named pipe / Unix socket** — slightly more secure (no port).
-  - **(c) Shared file + watcher** — MCP server appends commands; main `chokidar`-watches and applies. Coarse-grained, easy to debug.
-- **Conflict policy**: while a node is `state.editing`, mutations to that node are rejected with `BUSY`. All other mutations call `snapshot()` → apply → `save()` → `render()` exactly like a user action, so undo "just works".
-- **Auth**: token written to a 0600 file at app start, read by MCP server; included on every command. Defends against another local user driving the canvas.
+`mindmap_set_status` was dropped — node "status" turned out to be a renderer concern, not a structural one. Use `mindmap_update_node` with `icon` / `color` instead.
 
-**Decision deferred to Phase 2** — Phase 1 doesn't need to commit.
+**What we picked:** **Option (a) — HTTP localhost.**
+
+- Electron main starts an HTTP server on `127.0.0.1` with a random port (`port: 0`) on app launch. Port + per-launch token are written to `<userData>/mcp-control.json` with `0600` perms.
+- The MCP server reads that file before each write, then `POST /mutate` with body `{ type, params }` and header `X-Mindmap-Token`. Synchronous request/response — Claude's tool call returns the new state in one round-trip.
+- Reads keep using the snapshot file (no app required); writes require the app to be running. If `mcp-control.json` is missing or the port refuses connection, the MCP server returns a clear "Agentic Mindmap is not running" error — much friendlier than a stale write disappearing into nowhere.
+- **Conflict policy:** if `state.editing === id`, the mutation returns `code: BUSY`. All other mutations go through `snapshot()` → mutate → `save()` → `render()`, exactly like a user action — so ⌘Z undoes any Claude-driven change.
+- **Auth:** the per-launch token defends against another local user (or an unauthorized process) driving the canvas. Token rotates every app launch.
+- **No file-watcher:** Option (c) was rejected because reads-while-writing would race on partial writes. HTTP is request/response and atomic.
+
+**File layout addition:**
+
+```
+main.js
+  ↳ startMCPControlServer()  — listens on 127.0.0.1:<port>, writes mcp-control.json
+  ↳ ipcMain.handle('apply-mutation') — forwards to renderer
+
+preload.js
+  ↳ onApplyMutation, sendMutationResult — bridges between main and renderer
+
+index.html
+  ↳ MCP_HANDLERS = { add_node, update_node, delete_node, move_node, ai_expand }
+  ↳ each handler: snapshot() → mutate → save() → render() → return summary
+
+mcp/server.js
+  ↳ readControl() / postMutation() — HTTP client to the running app
+  ↳ WRITE_TOOLS routes the 5 new tools through postMutation
+```
 
 ## Phase 3 — live bidirectional sync (future)
 

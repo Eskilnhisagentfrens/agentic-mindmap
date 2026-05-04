@@ -10,7 +10,7 @@ A local, XMind-style mindmap that **Claude can read, search, and expand** — lo
 **Two flagship features:**
 
 - 🤖 **AI Expand** — select any node, click 🤖, and the model auto-classifies it, picks the best decomposition, and generates 3–8 children at depth 1–3 with a one-line "why" on each.
-- 🔌 **MCP plugin** — Claude Code / Desktop reads your live mindmap via three tools (`mindmap_get_state` / `mindmap_get_subtree` / `mindmap_search`). Uses your Claude Max OAuth → **$0 per query**. Read-only; mutations land in v0.4. ([plan](./docs/mcp-plan.md))
+- 🔌 **MCP plugin** — Claude Code / Desktop both **reads and edits** your live mindmap via 8 tools. Reads (`mindmap_get_state` / `mindmap_get_subtree` / `mindmap_search`) work whether the app is running or not. Writes (`mindmap_add_node` / `mindmap_update_node` / `mindmap_delete_node` / `mindmap_move_node` / `mindmap_ai_expand`) require the app to be open and go through your normal undo history (⌘Z reverts any Claude-driven change). Uses your Claude Max OAuth → **$0 per query**. ([plan](./docs/mcp-plan.md))
 
 **One-line install (Claude Code):**
 
@@ -234,22 +234,23 @@ agentic-mindmap/
 
 ## Roadmap
 
+### Done in v0.4.0
+- [x] **MCP write tools** — `mindmap_add_node` / `mindmap_update_node` / `mindmap_delete_node` / `mindmap_move_node` / `mindmap_ai_expand`. Mutations go through a localhost HTTP control server (per-launch token, 0600 control file) and replay through the user's normal undo history (⌘Z reverts any Claude-driven change).
+
+### Done in v0.3.x
+- [x] **MCP read tools** — `mindmap_get_state` / `mindmap_get_subtree` / `mindmap_search` (work whether the app is running or not)
+- [x] **Streaming AI Expand** — token deltas stream from main → renderer; live tail under the progress bar
+- [x] **Fast / Quality mode picker** — 🤖 (deepseek-chat / claude-haiku, ~5-10s) vs 🧠 (deepseek-reasoner / claude-sonnet, ~30-90s)
+- [x] **Clean default tree** — single root node, no preset branches
+- [x] **DMG bundles MCP** — `mcp/`, `.mcp.json`, `.claude-plugin/`, `skills/` shipped inside `Contents/Resources/`
+
 ### Done in v0.2.0
 - [x] **AI Expand** — single-button smart decompose (auto kind detection + depth 1-3 + sibling-aware + per-child why)
-- [x] **PDF export** (vector, ⌘P)
-- [x] **OPML export** (XMind / MindNode / Logseq compatible)
-- [x] **Clipboard ops** (⌘C subtree as MD / ⌘V MD as children / ⌘A select-all in edit)
-- [x] **Inline note preview** on canvas
-- [x] **Progress overlay** with live elapsed + phase + asymptotic bar
-- [x] **Logging & friendly errors** (electron-log + 9-case error mapping + Help menu reporting)
-
-### In progress
-- [~] **MCP server (read-only)** — `mcp/server.js` exposes `mindmap_get_state`, `mindmap_get_subtree`, `mindmap_search` over stdio. Claude Code / Desktop can browse the live canvas as a tool. See [docs/mcp-plan.md](./docs/mcp-plan.md). _Mutations land in Phase 2._
+- [x] **PDF / OPML export** + clipboard ops (⌘C/⌘V/⌘A) + inline note preview + logging & friendly errors
 
 ### Coming
-- [ ] **MCP server (mutations)** — `mindmap_add_node` / `mindmap_update_node` / `mindmap_delete_node` with live writeback to the renderer
+- [ ] **MCP Phase 3** — server-pushed `notifications/resources/updated` so MCP hosts re-fetch on user-side edits; streaming `mindmap_ai_expand`
 - [ ] In-app **Settings UI** for API keys, model selection, quality/speed presets
-- [ ] **Streaming** token-by-token responses for AI Expand
 - [ ] **App icon + code signing & notarization** (remove `xattr -cr` step)
 - [ ] In-app chat sidebar with bidirectional sync
 

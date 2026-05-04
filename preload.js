@@ -19,4 +19,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   exportPDF: (payload) => ipcRenderer.invoke('export-pdf', payload),
   pushSnapshot: (payload) => ipcRenderer.invoke('mindmap-snapshot', payload),
+  // MCP write-tool plumbing: main forwards mutation requests; renderer applies
+  // them via existing snapshot/save/render path and reports back the outcome.
+  onApplyMutation: (handler) => {
+    const wrapped = (_e, cmd) => handler(cmd);
+    ipcRenderer.on('apply-mutation', wrapped);
+    return () => ipcRenderer.removeListener('apply-mutation', wrapped);
+  },
+  sendMutationResult: (id, result) => ipcRenderer.send('mutation-result', { id, result }),
 });

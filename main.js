@@ -2,6 +2,8 @@ const { app, BrowserWindow, Menu, dialog, shell, ipcMain } = require('electron')
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const http = require('http');
+const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const Anthropic = require('@anthropic-ai/sdk');
 const log = require('electron-log/main');
@@ -72,6 +74,132 @@ function backupDir() {
 function snapshotPath() {
   return path.join(app.getPath('userData'), 'mcp-snapshot.json');
 }
+
+// Control file for MCP write tools — port + per-launch token. The MCP server
+// reads this to know where (and with what auth) to POST mutations. Permissions
+// are 0600 so only this user can read the token.
+function controlFilePath() {
+  return path.join(app.getPath('userData'), 'mcp-control.json');
+}
+
+let mcpControlServer = null;
+let mcpToken = null;
+let mcpPort = null;
+const pendingMutations = new Map(); // requestId → resolve fn
+
+function startMCPControlServer() {
+  mcpToken = crypto.randomBytes(24).toString('hex');
+
+  const srv = http.createServer((req, res) => {
+    if (req.method !== 'POST' || req.url !== '/mutate') {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'not found' }));
+      return;
+    }
+    const auth = req.headers['x-mindmap-token'];
+    if (auth !== mcpToken) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'token mismatch', code: 'AUTH' }));
+      return;
+    }
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk;
+      if (body.length > 1024 * 256) { // 256 KB cap on mutation payload
+        req.destroy();
+      }
+    });
+    req.on('end', async () => {
+      let cmd;
+      try { cmd = JSON.parse(body); }
+      catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'invalid JSON', code: 'BAD_REQUEST' }));
+        return;
+      }
+      log.info('mcp-control mutation', { type: cmd.type });
+      try {
+        const result = await dispatchMutation(cmd);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        log.error('mcp-control mutation failed', err && err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: err.message || String(err), code: 'EXCEPTION' }));
+      }
+    });
+  });
+
+  srv.listen(0, '127.0.0.1', () => {
+    mcpPort = srv.address().port;
+    const ctrl = {
+      version: 1,
+      port: mcpPort,
+      token: mcpToken,
+      pid: process.pid,
+      appVersion: app.getVersion(),
+      startedAt: new Date().toISOString(),
+    };
+    try {
+      const file = controlFilePath();
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(ctrl), { mode: 0o600 });
+      log.info('mcp-control listening', { port: mcpPort, file });
+    } catch (err) {
+      log.error('mcp-control: failed to write control file', err && err.message);
+    }
+  });
+
+  srv.on('error', (err) => {
+    log.error('mcp-control server error', err && err.message);
+  });
+
+  mcpControlServer = srv;
+}
+
+function stopMCPControlServer() {
+  try { fs.unlinkSync(controlFilePath()); } catch (_) {}
+  if (mcpControlServer) {
+    try { mcpControlServer.close(); } catch (_) {}
+    mcpControlServer = null;
+  }
+  // Reject any pending mutations.
+  for (const resolve of pendingMutations.values()) {
+    resolve({ ok: false, error: 'app shutting down', code: 'SHUTDOWN' });
+  }
+  pendingMutations.clear();
+}
+
+// Forward a mutation to the renderer and await its response. Renderer calls
+// snapshot() / save() / render() exactly like a user action so undo just works.
+function dispatchMutation(cmd) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return Promise.resolve({ ok: false, error: 'main window not ready', code: 'NO_WINDOW' });
+  }
+  return new Promise((resolve) => {
+    const reqId = crypto.randomBytes(8).toString('hex');
+    pendingMutations.set(reqId, resolve);
+    // 150s timeout — long enough for a quality-mode AI expand mutation.
+    const t = setTimeout(() => {
+      if (pendingMutations.has(reqId)) {
+        pendingMutations.delete(reqId);
+        resolve({ ok: false, error: 'renderer timeout (150s)', code: 'TIMEOUT' });
+      }
+    }, 150_000);
+    pendingMutations.get(reqId).__timer = t;
+    mainWindow.webContents.send('apply-mutation', { id: reqId, type: cmd.type, params: cmd.params || {} });
+  });
+}
+
+ipcMain.on('mutation-result', (_e, payload = {}) => {
+  const { id, result } = payload;
+  const resolver = pendingMutations.get(id);
+  if (resolver) {
+    if (resolver.__timer) clearTimeout(resolver.__timer);
+    pendingMutations.delete(id);
+    resolver(result || { ok: false, error: 'empty result from renderer', code: 'EMPTY' });
+  }
+});
 
 let mainWindow;
 
@@ -388,12 +516,36 @@ const SMART_DECOMPOSE_SYSTEM_PROMPT = `You are a senior domain expert helping th
 
 THIS IS NOT a generic outline tool. The output must reflect actual expertise, not safe generalities.
 
+═══ LANGUAGE (read this first — non-negotiable) ═══
+Detect the dominant language of the parent text. Output EVERY user-visible string — title, why, detected_kind_label, approach, depth_rationale — entirely in that SAME language. Do NOT translate. Do NOT code-switch mid-string.
+
+  • Parent in English → titles, why, kind_label, approach, rationale ALL in English
+  • Parent in 中文     → ALL 中文
+  • Parent in 日本語   → ALL 日本語
+  • Parent in Español / Deutsch / Français / Português / 한국어 → ALL in that language
+  • Brand / product names, technical acronyms (MVP, API, GDPR, JDLA, HTTP/2) and bare numbers stay in their canonical form — that is NOT code-switching.
+  • CHANGING THE NARRATIVE LANGUAGE INSIDE A SINGLE TITLE OR WHY IS A FAILURE. Do not write English structural words ("Week", "Phase", "Step", "Plan", "vs") wrapping a 中文 phrase, or 中文 wrapping English. Pick the parent's language and stay there.
+
+FAILURE EXAMPLES (do not produce these):
+  Parent: "How to launch an indie SaaS in 90 days"
+    ❌ "Week 3-5: MVP 最小核心路径（非全功能）"   — narrative code-switch
+    ❌ "市场验证 (market validation)"               — translation in parens, just pick one
+    ✅ "Week 3-5: ship MVP core path (no nice-to-haves)"
+    ✅ "Pre-launch: 50-user closed beta"
+
+  Parent: "如何在90天内推出一款独立SaaS产品"
+    ❌ "Week 3-5: MVP 核心路径"                    — English "Week 3-5" wrapping Chinese
+    ✅ "第3-5周：MVP 核心路径（先不做加分项）"
+    ✅ "上线前：50 个种子用户内测"
+
+The 'detected_kind' enum value (goal/concept/question/option/process/artifact/other) stays in English — that is a machine token, not user copy.
+
 ═══ EXPERTISE & SPECIFICITY (most important) ═══
 When the topic is country-, industry-, or technology-specific, you MUST:
-  • Name actual entities: real companies, products, regulations, government programs, communities, frameworks (キカガク / Aidemy / JDLA / 経営管理ビザ / Apollo MCP / FedRAMP / ISO 27001…). Generic categories like "竞品分析" without a single name are a failure.
-  • Cite specific numbers when load-bearing: prices, deadlines, thresholds, market sizes, sample ranges (e.g. "登記費約24万日元", "客単価500万-5000万日元", "minimum capital 500万円", "回款周期90天").
+  • Name actual entities: real companies, products, regulations, government programs, communities, frameworks. Generic categories like "competitor analysis" / "竞品分析" / "市場分析" without a single name are a failure.
+  • Cite specific numbers when load-bearing: prices, deadlines, thresholds, market sizes, sample ranges.
   • Surface non-obvious tradeoffs and culturally / legally / operationally specific constraints.
-  • Make a concrete recommendation when one option is meaningfully better. "建议直接做株式会社" beats "可以考虑多种法人形态".
+  • Make a concrete recommendation when one option is meaningfully better — name the choice rather than balancing all options.
   • If you genuinely lack specific knowledge of an area, say so honestly in 'depth_rationale' instead of fabricating.
 
 ═══ STEP 1 — Detect the kind of node ═══
@@ -431,17 +583,21 @@ DO NOT default to maximum depth. Going deeper than warranted produces filler; sh
 
 title (CRITICAL — this is the ONLY thing the user sees on the canvas at a glance):
   • PACK the title with the single most distinctive specific signal you can: a number, an entity/product name, a load-bearing qualifier. A title without any specific signal is a failure mode — even if the 'why' is good.
-  • DO NOT artificially shorten. If the title is "法人形态选择", you under-specified — make it "株式会社（24万日元登記費・推荐）".
-  • Examples that PASS:
-      "株式会社 KK（24万日元登記費）"
-      "JDLA G検定/E資格認定講座"
-      "Enterprise 层 + Agentic AI/MCP 差异化"
-      "B2B 客単価 500-5000万日元"
-      "Cookie 第三方 vs 第一方追踪"
-      "RAG ($0.02/query) vs 微调 ($5K一次性)"
-  • Examples that FAIL — too generic, no signal:
-      "法人形态选择" / "目标客户" / "运营推广" / "Strategy" / "Implementation" / "市场分析" / "竞品分析"
-  • Self-test: if you can swap the title with another topic's title without anyone noticing, you under-specified. Add the entity/number that makes it irreplaceable.
+  • DO NOT artificially shorten. Generic titles like "Strategy" / "Implementation" / "法人形态选择" / "市場分析" should be replaced with something like "Series A ($3M, 18mo runway)" / "株式会社 KK (24万日元登記費)" / "GoToMarket: PLG vs sales-led".
+  • Pass examples (multi-language — the model must mirror the user's language):
+      English  → "Series A ($3M target, 18mo runway)"
+                 "RAG ($0.02/query) vs fine-tune ($5K one-shot)"
+                 "Cookie: 1st-party vs 3rd-party tracking"
+      中文      → "B2B 客单价 500-5000 万日元"
+                 "上海经营管理签证 + 资本金 500万円"
+      日本語    → "株式会社 KK（24万日元登記費）"
+                 "JDLA G検定 / E資格認定講座"
+      Español  → "Sucursal LATAM (cumplimiento RGPD/LGPD)"
+  • Failure examples (across all languages — same shape, no signal):
+      English  → "Strategy" / "Implementation" / "Target customers" / "Competitor analysis"
+      中文      → "法人形态选择" / "目标客户" / "运营推广" / "市场分析" / "竞品分析"
+      日本語    → "戦略" / "目標顧客" / "競合分析"
+  • Self-test: if you can swap the title with another topic's title without anyone noticing, you under-specified. Add the entity/number that makes it irreplaceable — IN THE PARENT'S LANGUAGE.
 
 why (1-3 sentences, mini-analysis):
   • Include specific entities, numbers, or tradeoffs.
@@ -450,24 +606,26 @@ why (1-3 sentences, mini-analysis):
   • Avoid hedging filler like "需要综合考虑".
 
 ═══ CRITICAL RULES ═══
-- Match the language of the parent (Chinese in → Chinese out).
+- Mirror the parent's language across every user-facing string (see LANGUAGE section above).
 - DO NOT repeat or paraphrase the parent text in titles.
-- DO NOT use placeholders ("N/A", "TBD", "Unknown", "None").
+- DO NOT use placeholders ("N/A", "TBD", "Unknown", "None", "未知", "未定").
 - Match style/granularity of any existing peers/cousins given.
 - Never duplicate existing children.
 
 ═══ OUTPUT ═══
-STRICT JSON, no markdown fences, no commentary, no preamble:
+STRICT JSON, no markdown fences, no commentary, no preamble.
+All user-visible string values (title, why, detected_kind_label, approach, depth_rationale) MUST be in the parent's language. The 'detected_kind' enum stays in English (machine token).
+
 {
   "detected_kind": "goal" | "concept" | "question" | "option" | "process" | "artifact" | "other",
-  "detected_kind_label": "短中/英文描述识别结果（含具体语境，如「日本市场B2B切入」而不只是「商业问题」）",
-  "approach": "短描述你采用的分解策略",
+  "detected_kind_label": "<short label in the parent's language, with specific context — e.g. 'Japan B2B market entry' or 「日本市場B2B 切入」 or 「日本市場の B2B 参入」, never just 'business problem'>",
+  "approach": "<short description of the decomposition strategy you used, in the parent's language>",
   "chosen_depth": 1 | 2 | 3,
-  "depth_rationale": "一句说明为什么选这个深度",
+  "depth_rationale": "<one sentence explaining why this depth, in the parent's language>",
   "children": [
     {
-      "title": "...",
-      "why": "1-3 句具体分析，含实体/数字/tradeoff/明确推荐",
+      "title": "<specific phrase in parent's language>",
+      "why": "<1-3 sentences in parent's language with entities/numbers/tradeoff/recommendation>",
       "children": [
         { "title": "...", "why": "...", "children": [...] }
       ]
@@ -752,9 +910,14 @@ ipcMain.handle('save-file', async (_event, { defaultName, content, filters }) =>
 app.whenReady().then(() => {
   createWindow();
   buildMenu();
+  startMCPControlServer();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+app.on('before-quit', () => {
+  stopMCPControlServer();
 });
 
 app.on('window-all-closed', () => {

@@ -1,7 +1,7 @@
 {
   "name": "agentic-mindmap",
   "productName": "Agentic Mindmap",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Agentic Mindmap - 可与 LLM agent 协同的本地思维导图（XMind 风格）",
   "main": "main.js",
   "author": "Eskil",
@@ -9,7 +9,11 @@
   "scripts": {
     "start": "electron .",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder --mac"
+    "dist": "electron-builder --mac",
+    "test": "node --test --test-reporter=spec 'test/**/*.test.js'",
+    "test:unit": "node --test --test-reporter=spec 'test/unit/**/*.test.js'",
+    "test:integration": "node --test --test-reporter=spec 'test/integration/**/*.test.js'",
+    "eval:prompt": "node --test --test-reporter=spec 'test/prompt/**/*.eval.js'"
   },
   "devDependencies": {
     "electron": "^33.0.0",

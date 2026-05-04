@@ -1287,9 +1287,12 @@ async function aiSmartExpand(modeArg) {
     const rationale  = result.depth_rationale || '';
     const elapsedSec = result.elapsedMs ? (result.elapsedMs / 1000).toFixed(1) : null;
     const modeIcon   = result.mode === 'quality' ? '🧠' : '🤖';
-    const head       = kindLabel ? `${modeIcon} 识别为「${kindLabel}」` : `${modeIcon} 已分解`;
+    // Static labels stay in English so the toast format is consistent across
+    // languages; the dynamic content (kindLabel / approach / rationale) is
+    // already in the user's language because the system prompt mirrors it.
+    const head       = kindLabel ? `${modeIcon} ${kindLabel}` : `${modeIcon} expanded`;
     const body       = approach ? ` → ${approach}` : '';
-    const stats      = ` · ${depth} 层 / ${total} 节点` + (elapsedSec ? ` · ${elapsedSec}s` : '');
+    const stats      = ` · ${depth}L / ${total} nodes` + (elapsedSec ? ` · ${elapsedSec}s` : '');
     const why        = rationale ? `\n${rationale}` : '';
     toast(head + body + stats + why, 7000);
   } catch (err) {
@@ -2843,12 +2846,192 @@ function toast(msg, durationMs) {
 }
 
 // =========================================================================
+//  MCP write tools — apply mutations forwarded from main.js's HTTP control
+//  server. Each handler calls snapshot() → mutate → save() → render(), so the
+//  user can hit ⌘Z to undo any Claude-driven change exactly like a manual one.
+// =========================================================================
+
+function findNodeWithParent(root, id, parent = null) {
+  if (!root) return null;
+  if (root.id === id) return { node: root, parent };
+  for (const c of root.children || []) {
+    const hit = findNodeWithParent(c, id, root);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function countSubtree(n) {
+  if (!n) return 0;
+  let c = 1;
+  for (const k of n.children || []) c += countSubtree(k);
+  return c;
+}
+
+function summarizeNode(n) {
+  return { id: n.id, text: n.text, hasChildren: !!(n.children && n.children.length) };
+}
+
+function mcpAddNode(p) {
+  if (!p || typeof p.text !== 'string' || !p.text.trim()) {
+    return { ok: false, error: 'text required and non-empty', code: 'INVALID' };
+  }
+  const found = findNodeWithParent(state.root, p.parentId);
+  if (!found) return { ok: false, error: `parent ${p.parentId} not found`, code: 'NOT_FOUND' };
+  if (state.editing && state.editing === p.parentId) {
+    return { ok: false, error: 'parent is being edited', code: 'BUSY' };
+  }
+  snapshot();
+  const n = createNode(p.text.trim());
+  if (typeof p.icon === 'string')  n.icon  = p.icon;
+  if (typeof p.note === 'string')  n.note  = p.note;
+  if (typeof p.color === 'string') n.color = p.color;
+  found.node.collapsed = false;
+  const sibs = found.node.children;
+  if (Number.isInteger(p.position) && p.position >= 0 && p.position <= sibs.length) {
+    sibs.splice(p.position, 0, n);
+  } else {
+    sibs.push(n);
+  }
+  save(); render();
+  return { ok: true, node: summarizeNode(n), parentId: found.node.id };
+}
+
+function mcpUpdateNode(p) {
+  if (!p || !p.id) return { ok: false, error: 'id required', code: 'INVALID' };
+  const found = findNodeWithParent(state.root, p.id);
+  if (!found) return { ok: false, error: `node ${p.id} not found`, code: 'NOT_FOUND' };
+  if (state.editing && state.editing === p.id) {
+    return { ok: false, error: 'node is being edited', code: 'BUSY' };
+  }
+  snapshot();
+  const updated = {};
+  if (typeof p.text === 'string')      { found.node.text = p.text;       updated.text = p.text; }
+  if (typeof p.icon === 'string')      { found.node.icon = p.icon;       updated.icon = p.icon; }
+  if (typeof p.color === 'string')     { found.node.color = p.color;     updated.color = p.color; }
+  if (typeof p.note === 'string')      { found.node.note = p.note;       updated.note = p.note; }
+  if (typeof p.collapsed === 'boolean'){ found.node.collapsed = p.collapsed; updated.collapsed = p.collapsed; }
+  save(); render();
+  return { ok: true, nodeId: p.id, updated };
+}
+
+function mcpDeleteNode(p) {
+  if (!p || !p.id) return { ok: false, error: 'id required', code: 'INVALID' };
+  const found = findNodeWithParent(state.root, p.id);
+  if (!found) return { ok: false, error: `node ${p.id} not found`, code: 'NOT_FOUND' };
+  if (!found.parent) return { ok: false, error: 'cannot delete root', code: 'ROOT' };
+  if (state.editing && state.editing === p.id) {
+    return { ok: false, error: 'node is being edited', code: 'BUSY' };
+  }
+  snapshot();
+  const idx = found.parent.children.indexOf(found.node);
+  const size = countSubtree(found.node);
+  found.parent.children.splice(idx, 1);
+  if (state.selectedId === p.id) {
+    state.selectedId = found.parent.id;
+  }
+  save(); render();
+  return { ok: true, deletedId: p.id, deletedSubtreeSize: size, newSelectedId: state.selectedId };
+}
+
+function mcpMoveNode(p) {
+  if (!p || !p.id || !p.newParentId) {
+    return { ok: false, error: 'id and newParentId required', code: 'INVALID' };
+  }
+  if (p.id === p.newParentId) {
+    return { ok: false, error: 'cannot move into self', code: 'INVALID' };
+  }
+  const target = findNodeWithParent(state.root, p.id);
+  if (!target) return { ok: false, error: `node ${p.id} not found`, code: 'NOT_FOUND' };
+  if (!target.parent) return { ok: false, error: 'cannot move root', code: 'ROOT' };
+  const newParent = findNodeWithParent(state.root, p.newParentId);
+  if (!newParent) return { ok: false, error: `new parent ${p.newParentId} not found`, code: 'NOT_FOUND' };
+  // Cycle check: newParent must not be inside target's subtree.
+  if (findNodeWithParent(target.node, p.newParentId)) {
+    return { ok: false, error: 'would create a cycle', code: 'CYCLE' };
+  }
+  snapshot();
+  const oldIdx = target.parent.children.indexOf(target.node);
+  target.parent.children.splice(oldIdx, 1);
+  newParent.node.collapsed = false;
+  const sibs = newParent.node.children;
+  let pos;
+  if (Number.isInteger(p.position) && p.position >= 0 && p.position <= sibs.length) {
+    sibs.splice(p.position, 0, target.node);
+    pos = p.position;
+  } else {
+    sibs.push(target.node);
+    pos = sibs.length - 1;
+  }
+  save(); render();
+  return { ok: true, nodeId: p.id, newParentId: p.newParentId, position: pos };
+}
+
+async function mcpAIExpandFromMCP(p) {
+  if (!p || !p.nodeId) return { ok: false, error: 'nodeId required', code: 'INVALID' };
+  if (aiExpandInFlight) return { ok: false, error: 'another AI expand is in flight', code: 'BUSY' };
+  const found = findNodeWithParent(state.root, p.nodeId);
+  if (!found) return { ok: false, error: `node ${p.nodeId} not found`, code: 'NOT_FOUND' };
+
+  const before = (found.node.children || []).slice();
+  const beforeCount = before.length;
+  // Visually select the target so the user sees what Claude is expanding.
+  state.selectedId = p.nodeId;
+  render();
+  const mode = p.mode === 'quality' ? 'quality' : 'fast';
+  await aiSmartExpand(mode);
+  const after = found.node.children || [];
+  const added = after.slice(beforeCount).map(summarizeNode);
+  return {
+    ok: true,
+    nodeId: p.nodeId,
+    mode,
+    added,
+    addedCount: added.length,
+  };
+}
+
+const MCP_HANDLERS = {
+  add_node:    mcpAddNode,
+  update_node: mcpUpdateNode,
+  delete_node: mcpDeleteNode,
+  move_node:   mcpMoveNode,
+  ai_expand:   mcpAIExpandFromMCP,
+};
+
+function setupMCPMutations() {
+  if (!window.electronAPI || !window.electronAPI.onApplyMutation) return;
+  window.electronAPI.onApplyMutation(async (cmd) => {
+    let result;
+    try {
+      const handler = MCP_HANDLERS[cmd && cmd.type];
+      if (!handler) {
+        result = { ok: false, error: `unknown mutation type: ${cmd && cmd.type}`, code: 'INVALID_TYPE' };
+      } else {
+        result = await handler(cmd.params || {});
+      }
+    } catch (err) {
+      result = { ok: false, error: (err && err.message) || String(err), code: 'EXCEPTION' };
+    }
+    if (result && result.ok) {
+      const last = result.added ? `+${result.addedCount} nodes` :
+                   result.deletedId ? `−${result.deletedSubtreeSize}` :
+                   result.node ? `added "${result.node.text}"` :
+                   result.updated ? 'updated' : '';
+      toast('🔌 Claude: ' + (cmd.type) + (last ? ' · ' + last : ''), 3500);
+    }
+    window.electronAPI.sendMutationResult(cmd.id, result);
+  });
+}
+
+// =========================================================================
 //  Boot
 // =========================================================================
 loadStored();
 ensureSelected();
 buildPopovers();
 setupAIStream();
+setupMCPMutations();
 { // initial layout button sync
   const ic = document.getElementById('layout-icon');
   const lb = document.getElementById('layout-label');

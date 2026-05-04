@@ -2,9 +2,12 @@
 
 [English](./README.md) · [中文](./README.zh.md) · **日本語**
 
-LLM エージェントと連携できる、ローカル動作の XMind 風マインドマップ。デスクトップ（macOS Electron）とブラウザの両方で動き、**データは完全にあなたのマシン内にとどまります**。
+**Claude が読み、検索し、編集できる**ローカル動作の XMind 風マインドマップ。データはあなたのマシンから出ません。
 
-> 🤖 **AI 展開**：任意のノードを選択し、ツールバーの 🤖 を押すと、モデルが自動的にノードの種類を判別し、最適な分解方法を選び、複雑度に応じて深さ（1〜3 階層）を決定します。生成された各子ノードには「なぜそれが妥当な子ノードなのか」を一文で説明する why が付きます — キャンバス上に直接表示されるので、メモパネルを開く必要はありません。
+**2 つの主力機能：**
+
+- 🤖 **AI 展開** — ノードを選んで 🤖（fast）または 🧠（quality）をクリックすると、モデルが自動的にノードの種類を判別し、最適な分解方法を選び、複雑度に応じて深さ（1〜3 階層）を決定します。各子ノードには why が付き、キャンバス上にインライン表示されます。
+- 🔌 **MCP プラグイン** — Claude Code / Desktop が**読み書きどちらもできる** 8 ツールを提供。読み取り（`mindmap_get_state` / `mindmap_get_subtree` / `mindmap_search`）はアプリ起動の有無を問いません。書き込み（`mindmap_add_node` / `mindmap_update_node` / `mindmap_delete_node` / `mindmap_move_node` / `mindmap_ai_expand`）にはアプリ起動が必要で、ユーザーの通常の Undo 履歴に乗る（⌘Z で Claude による変更を取り消せる）。Claude Max OAuth 経由 → **クエリあたり $0**。
 
 ## インストール
 
@@ -220,19 +223,23 @@ agentic-mindmap/
 
 ## ロードマップ
 
+### v0.4.0 で完了
+- [x] **MCP 書き込みツール** — `mindmap_add_node` / `mindmap_update_node` / `mindmap_delete_node` / `mindmap_move_node` / `mindmap_ai_expand`。Claude が**実際にマインドマップを編集**できるようになりました。変更は localhost HTTP（起動ごとのトークン + 0600 コントロールファイル）で配信され、ユーザーの通常の Undo 履歴に乗るため ⌘Z で Claude による変更を取り消せます。
+
+### v0.3.x で完了
+- [x] **MCP 読み取りツール** — `mindmap_get_state` / `mindmap_get_subtree` / `mindmap_search`（アプリが起動していなくても読める）
+- [x] **ストリーミング AI 展開** — トークンが届くたびにプログレスバー下にライブ表示
+- [x] **快速 / 品質モード切り替え** — 🤖（chat / haiku, 約 5-10 秒）vs 🧠（reasoner / sonnet, 約 30-90 秒）
+- [x] **クリーンなデフォルトツリー** — ルートノード 1 つだけ、プリセットなし
+- [x] **DMG に MCP プラグインを同梱** — `mcp/` / `.mcp.json` / `.claude-plugin/` / `skills/` を `Contents/Resources/` に同梱
+
 ### v0.2.0 で完了
 - [x] **AI 展開** — 単一ボタンのスマート分解（自動分類 + 深さ 1-3 + 兄弟ノード認識 + 子ノードごとの why）
-- [x] **PDF 書き出し**（ベクター、⌘P）
-- [x] **OPML 書き出し**（XMind / MindNode / Logseq で再編集可）
-- [x] **クリップボード操作**（⌘C サブツリーを MD で / ⌘V MD を子ノードとして / ⌘A 編集中全選択）
-- [x] **キャンバス内インラインメモプレビュー**
-- [x] **プログレスオーバーレイ** リアルタイム経過秒数 + 段階表示 + 漸近バー
-- [x] **ロギング + わかりやすいエラー**（electron-log + 9 種類のエラーマッピング + Help メニュー報告）
+- [x] **PDF / OPML 書き出し** + クリップボード操作（⌘C/⌘V/⌘A）+ キャンバス内インラインメモプレビュー + ロギング & わかりやすいエラー
 
 ### 今後
-- [ ] **MCP サーバ** — マインドマップを MCP サーバとして公開し、Claude Code / Desktop からツールとして直接読み書き（API 課金不要、Max OAuth で完結）
+- [ ] **MCP Phase 3** — `notifications/resources/updated` をサーバから push、ユーザー編集を MCP host にリアルタイム通知 / `mindmap_ai_expand` のストリーミング
 - [ ] アプリ内 **設定パネル** — API キー、モデル選択、品質/速度プリセット
-- [ ] AI 展開の **トークン単位ストリーミング**
 - [ ] **アプリアイコン + コード署名 & 公証**（`xattr -cr` 手順を不要に）
 - [ ] アプリ内 chat サイドバー（マインドマップと双方向同期）
 

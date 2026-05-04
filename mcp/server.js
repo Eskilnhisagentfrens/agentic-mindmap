@@ -1,15 +1,15 @@
 #!/usr/bin/env node
-// Agentic Mindmap MCP server — Phase 1 (read-only).
+// Agentic Mindmap MCP server — Phase 1 (read) + Phase 2 (write) shipped.
 // See docs/mcp-plan.md for the full design.
 //
-// Spawned by an MCP host (Claude Desktop / Code) over stdio. Reads the active
-// mindmap from a snapshot file written by the Electron main process on every
-// save(). The Electron app does NOT need to be running for reads — the file
-// just becomes stale.
+// Spawned by an MCP host (Claude Desktop / Code) over stdio.
+//   READS  use a snapshot file written by the Electron main on every save();
+//          the app does not need to be running.
+//   WRITES POST to a localhost HTTP control server hosted by the running app
+//          (port + per-launch token in mcp-control.json). App MUST be running.
 
 const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const http = require('http');
 
 const { Server } = require('@modelcontextprotocol/sdk/server/index.js');
 const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
@@ -18,23 +18,79 @@ const {
   ListToolsRequestSchema,
 } = require('@modelcontextprotocol/sdk/types.js');
 
-const PRODUCT_NAME = 'Agentic Mindmap';
-
-function defaultSnapshotPath() {
-  if (process.env.MINDMAP_SNAPSHOT_PATH) return process.env.MINDMAP_SNAPSHOT_PATH;
-  const home = os.homedir();
-  if (process.platform === 'darwin') {
-    return path.join(home, 'Library', 'Application Support', PRODUCT_NAME, 'mcp-snapshot.json');
-  }
-  if (process.platform === 'win32') {
-    const appdata = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
-    return path.join(appdata, PRODUCT_NAME, 'mcp-snapshot.json');
-  }
-  const xdg = process.env.XDG_CONFIG_HOME || path.join(home, '.config');
-  return path.join(xdg, PRODUCT_NAME, 'mcp-snapshot.json');
-}
+const {
+  defaultSnapshotPath,
+  defaultControlPath,
+  findNode,
+  trimTree,
+  countNodes,
+  searchTree,
+} = require('./lib.js');
 
 const SNAPSHOT_PATH = defaultSnapshotPath();
+const CONTROL_PATH = defaultControlPath();
+
+function readControl() {
+  let raw;
+  try {
+    raw = fs.readFileSync(CONTROL_PATH, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      throw new Error(
+        'Agentic Mindmap is not running. Mutations require the app to be open. ' +
+        'Launch Agentic Mindmap and retry.'
+      );
+    }
+    throw new Error(`Failed to read control file: ${err.message}`);
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Control file invalid JSON: ${err.message}`);
+  }
+}
+
+function postMutation(type, params) {
+  return new Promise((resolve, reject) => {
+    let ctrl;
+    try { ctrl = readControl(); }
+    catch (err) { reject(err); return; }
+    const body = JSON.stringify({ type, params });
+    const req = http.request({
+      host: '127.0.0.1',
+      port: ctrl.port,
+      method: 'POST',
+      path: '/mutate',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'X-Mindmap-Token': ctrl.token,
+      },
+    }, (res) => {
+      let chunks = '';
+      res.on('data', (c) => { chunks += c; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(chunks)); }
+        catch (err) {
+          reject(new Error(`Bad response from app (HTTP ${res.statusCode}): ${chunks.slice(0, 200)}`));
+        }
+      });
+    });
+    req.on('error', (err) => {
+      if (err.code === 'ECONNREFUSED') {
+        reject(new Error(
+          'Agentic Mindmap appears to have quit (control port refused connection). ' +
+          'Re-launch the app and retry.'
+        ));
+      } else {
+        reject(err);
+      }
+    });
+    req.setTimeout(160000, () => { req.destroy(new Error('mutation timed out (160s)')); });
+    req.write(body);
+    req.end();
+  });
+}
 
 function readSnapshot() {
   let raw;
@@ -56,70 +112,6 @@ function readSnapshot() {
   }
 }
 
-function findNode(node, id) {
-  if (!node) return null;
-  if (node.id === id) return node;
-  for (const c of node.children || []) {
-    const hit = findNode(c, id);
-    if (hit) return hit;
-  }
-  return null;
-}
-
-function trimTree(node, maxDepth, includeNotes, depth = 0) {
-  const out = { id: node.id, text: node.text };
-  if (node.icon) out.icon = node.icon;
-  if (includeNotes && node.note) out.note = node.note;
-  if (Array.isArray(node.children) && node.children.length && (maxDepth == null || depth < maxDepth)) {
-    out.children = node.children.map(c => trimTree(c, maxDepth, includeNotes, depth + 1));
-  }
-  return out;
-}
-
-function countNodes(node) {
-  if (!node) return 0;
-  let n = 1;
-  for (const c of node.children || []) n += countNodes(c);
-  return n;
-}
-
-function searchTree(root, query, limit, includeNotes) {
-  const q = String(query || '').toLowerCase();
-  if (!q) return [];
-  const results = [];
-  const path = [];
-
-  function walk(node) {
-    if (results.length >= limit) return;
-    path.push(node.text);
-    const text = String(node.text || '');
-    const note = includeNotes ? String(node.note || '') : '';
-    const lt = text.toLowerCase();
-    const ln = note.toLowerCase();
-    let snippet = null;
-    if (lt.includes(q)) {
-      snippet = text;
-    } else if (includeNotes && ln.includes(q)) {
-      const i = ln.indexOf(q);
-      const start = Math.max(0, i - 30);
-      const end = Math.min(note.length, i + q.length + 30);
-      snippet = (start > 0 ? '…' : '') + note.slice(start, end) + (end < note.length ? '…' : '');
-    }
-    if (snippet != null) {
-      results.push({
-        id: node.id,
-        text,
-        path: path.slice(),
-        snippet,
-      });
-    }
-    for (const c of node.children || []) walk(c);
-    path.pop();
-  }
-
-  walk(root);
-  return results;
-}
 
 // =============================================================================
 //  Tool definitions
@@ -176,14 +168,107 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  // ===== Phase 2 — write tools (require Agentic Mindmap to be running) =====
+  {
+    name: 'mindmap_add_node',
+    description:
+      'Add a new child node under an existing parent. The Agentic Mindmap app MUST be running. Use mindmap_search or mindmap_get_subtree to find a parentId first. Mutations call snapshot() first, so the user can ⌘Z to undo.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        parentId: { type: 'string', description: 'ID of the parent node (from mindmap_search / mindmap_get_subtree)' },
+        text:     { type: 'string', minLength: 1, description: 'Title of the new node' },
+        note:     { type: 'string', description: 'Optional multi-line note shown inline under the title' },
+        icon:     { type: 'string', description: 'Optional emoji prepended to the title' },
+        color:    { type: 'string', description: 'Optional hex color (e.g. "#89b4fa")' },
+        position: { type: 'integer', minimum: 0, description: 'Insert at this index among siblings; defaults to end' },
+      },
+      required: ['parentId', 'text'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'mindmap_update_node',
+    description:
+      'Update fields on an existing node. Only the fields you provide are changed; others are preserved. App must be running.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id:        { type: 'string' },
+        text:      { type: 'string' },
+        icon:      { type: 'string' },
+        color:     { type: 'string' },
+        note:      { type: 'string' },
+        collapsed: { type: 'boolean' },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'mindmap_delete_node',
+    description:
+      'Delete a node and its entire subtree. Cannot delete the root. App must be running.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'mindmap_move_node',
+    description:
+      'Move a node (with its subtree) to be a child of a different parent. Refuses to create cycles or move the root. App must be running.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id:          { type: 'string' },
+        newParentId: { type: 'string' },
+        position:    { type: 'integer', minimum: 0, description: 'Insert at this index among new siblings; defaults to end' },
+      },
+      required: ['id', 'newParentId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'mindmap_ai_expand',
+    description:
+      'Trigger AI Expand on a node — same as the user clicking 🤖 in the toolbar. Generates 3-6 children with auto-detected depth (1-3 layers) and an inline "why" on each. mode="fast" (~5-10s) or "quality" (~30-90s, deeper). App must be running. Returns the new child ids and titles.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        nodeId: { type: 'string' },
+        mode:   { type: 'string', enum: ['fast', 'quality'], default: 'fast' },
+      },
+      required: ['nodeId'],
+      additionalProperties: false,
+    },
+  },
 ];
+
+const WRITE_TOOLS = new Set([
+  'mindmap_add_node',
+  'mindmap_update_node',
+  'mindmap_delete_node',
+  'mindmap_move_node',
+  'mindmap_ai_expand',
+]);
+
+const WRITE_TYPE_BY_TOOL = {
+  mindmap_add_node:    'add_node',
+  mindmap_update_node: 'update_node',
+  mindmap_delete_node: 'delete_node',
+  mindmap_move_node:   'move_node',
+  mindmap_ai_expand:   'ai_expand',
+};
 
 // =============================================================================
 //  Server
 // =============================================================================
 
 const server = new Server(
-  { name: 'agentic-mindmap', version: '0.1.0' },
+  { name: 'agentic-mindmap', version: '0.2.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -192,6 +277,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args = {} } = req.params;
   try {
+    // Write tools — forward to the running Electron app via HTTP control plane.
+    // No snapshot read needed; the app is the source of truth for mutations.
+    if (WRITE_TOOLS.has(name)) {
+      const type = WRITE_TYPE_BY_TOOL[name];
+      const result = await postMutation(type, args);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
     const snap = readSnapshot();
     const root = snap.root;
 
