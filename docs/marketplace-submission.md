@@ -43,21 +43,21 @@ productivity
   "description": "Read, search, and browse your local Agentic Mindmap from Claude Code or Desktop. Bundles an MCP server (3 read-only tools) and a skill that auto-routes natural-language queries to the right tool.",
   "author": {
     "name": "Eskil",
-    "url": "https://github.com/Eskilnhisagentfrens"
+    "url": "https://github.com/EskilXu"
   },
   "category": "productivity",
   "source": {
     "source": "url",
-    "url": "https://github.com/Eskilnhisagentfrens/agentic-mindmap.git",
+    "url": "https://github.com/EskilXu/agentic-mindmap.git",
     "ref": "v0.3.0"
   },
-  "homepage": "https://github.com/Eskilnhisagentfrens/agentic-mindmap"
+  "homepage": "https://github.com/EskilXu/agentic-mindmap"
 }
 ```
 
 ### Author / contact
-- GitHub: `Eskilnhisagentfrens`
-- Repo homepage: https://github.com/Eskilnhisagentfrens/agentic-mindmap
+- GitHub: `EskilXu`
+- Repo homepage: https://github.com/EskilXu/agentic-mindmap
 
 ### One-line elevator pitch (for the form's optional "why this plugin" field)
 ```

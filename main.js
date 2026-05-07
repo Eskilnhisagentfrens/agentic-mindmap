@@ -16,7 +16,7 @@ log.info('=== Agentic Mindmap starting ===',
   'app=', app.getName(), 'electron=', process.versions.electron,
   'node=', process.versions.node, 'platform=', process.platform);
 
-const REPO_URL = 'https://github.com/Eskilnhisagentfrens/agentic-mindmap';
+const REPO_URL = 'https://github.com/EskilXu/agentic-mindmap';
 
 function logFilePath() {
   const t = log.transports.file;

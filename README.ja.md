@@ -13,7 +13,7 @@
 
 ### リリース版をダウンロード（ビルド不要）
 
-[**最新リリース**](https://github.com/Eskilnhisagentfrens/agentic-mindmap/releases/latest) — Apple Silicon と Intel Mac 用の DMG が用意されています。
+[**最新リリース**](https://github.com/EskilXu/agentic-mindmap/releases/latest) — Apple Silicon と Intel Mac 用の DMG が用意されています。
 
 ```bash
 # 初回起動には Gatekeeper 回避が必要です（DMG は未署名）：
@@ -23,7 +23,7 @@ xattr -cr "/Applications/Agentic Mindmap.app"
 ### ソースからビルド（開発者向け）
 
 ```bash
-git clone https://github.com/Eskilnhisagentfrens/agentic-mindmap.git
+git clone https://github.com/EskilXu/agentic-mindmap.git
 cd agentic-mindmap
 npm install      # 初回のみ
 npm start        # 起動

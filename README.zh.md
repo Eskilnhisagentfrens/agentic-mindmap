@@ -13,7 +13,7 @@
 
 ### 下载发布版（无需自己编译）
 
-[**最新发布**](https://github.com/Eskilnhisagentfrens/agentic-mindmap/releases/latest) —— 提供 Apple Silicon 和 Intel Mac 两种 DMG。
+[**最新发布**](https://github.com/EskilXu/agentic-mindmap/releases/latest) —— 提供 Apple Silicon 和 Intel Mac 两种 DMG。
 
 ```bash
 # 首次启动需要绕过 Gatekeeper（DMG 未签名）：
@@ -23,7 +23,7 @@ xattr -cr "/Applications/Agentic Mindmap.app"
 ### 从源码编译（开发者）
 
 ```bash
-git clone https://github.com/Eskilnhisagentfrens/agentic-mindmap.git
+git clone https://github.com/EskilXu/agentic-mindmap.git
 cd agentic-mindmap
 npm install      # 首次运行
 npm start        # 启动
