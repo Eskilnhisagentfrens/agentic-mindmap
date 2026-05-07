@@ -498,6 +498,9 @@
   </div>
 </div>
 
+<!-- Pure helpers, also unit-tested under test/unit/. window.AgenticDrag is set when this loads. -->
+<script src="./lib/drag.js"></script>
+
 <script>
 // =========================================================================
 //  Data model
@@ -685,7 +688,11 @@ function position(node, anchorX, y, dir = 1) {
   const s = state.nodeScale || 1;
   const hGap = H_GAP_BASE * s;
   const vGap = V_GAP_BASE * s;
-  const ox = ((node.offset && node.offset.x) || 0) * dir;  // flip offset for left side
+  // node.offset is stored in screen-space (right = +x always), so the layout
+  // applies it directly without flipping by `dir`. The earlier `* dir` flip
+  // caused left-side nodes to drift further from the root on every screen
+  // drag — see lib/drag.js applyLayoutOffset() and its regression tests.
+  const ox = (node.offset && node.offset.x) || 0;
   const oy = (node.offset && node.offset.y) || 0;
   node._x = (dir >= 0 ? anchorX : anchorX - node._w) + ox;
   node._cy = y + node._subH / 2 + oy;
@@ -1545,8 +1552,14 @@ function startDrag(e) {
   ghost.style.height = srcEl.offsetHeight + 'px';
   document.body.appendChild(ghost);
   drag.ghost = ghost;
-  drag.ghostOffsetX = 14;
-  drag.ghostOffsetY = 14;
+  // WYSIWYG drag: ghost grip = where the cursor actually clicked inside the
+  // node, not a hard-coded constant. Without this, dragging a node from any
+  // point other than +14,+14 inside it would land the node off from where the
+  // ghost visually rested at release. See lib/drag.js + test/unit/drag.test.js.
+  const srcRect = srcEl.getBoundingClientRect();
+  const grip = window.AgenticDrag.computeGhostGripOffset(drag.startX, drag.startY, srcRect);
+  drag.ghostOffsetX = grip.x;
+  drag.ghostOffsetY = grip.y;
   updateDragVisuals(e);
 }
 
@@ -1661,15 +1674,16 @@ function commitDrag() {
     return;
   }
 
-  // Otherwise → free-position at release point (works for root too).
-  const dxScreen = (lastX ?? startX) - startX;
-  const dyScreen = (lastY ?? startY) - startY;
-  if (Math.hypot(dxScreen, dyScreen) < 4) return;
+  // Otherwise → free-position at release point (works for root too). Delta
+  // math lives in lib/drag.js so the WYSIWYG invariant is unit-tested.
+  const delta = window.AgenticDrag.computeFreePositionDelta(
+    startX, startY, lastX, lastY, state.viewport.scale
+  );
+  if (!delta) return;
   snapshot();
-  const vs = state.viewport.scale || 1;
   r.node.offset = r.node.offset || { x: 0, y: 0 };
-  r.node.offset.x += dxScreen / vs;
-  r.node.offset.y += dyScreen / vs;
+  r.node.offset.x += delta.x;
+  r.node.offset.y += delta.y;
   save(); render();
 }
 

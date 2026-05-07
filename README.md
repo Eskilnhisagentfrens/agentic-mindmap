@@ -15,7 +15,7 @@ A local, XMind-style mindmap that **Claude can read, search, and expand** — lo
 **One-line install (Claude Code):**
 
 ```
-/plugin install Eskilnhisagentfrens/agentic-mindmap
+/plugin install eskilxu/agentic-mindmap
 ```
 
 Other clients & manual config: see [Use with Claude Desktop / Code](#use-with-claude-desktop--code-mcp-read-only) below.
@@ -24,7 +24,7 @@ Other clients & manual config: see [Use with Claude Desktop / Code](#use-with-cl
 
 ### Download a release (no build required)
 
-[**Latest release**](https://github.com/Eskilnhisagentfrens/agentic-mindmap/releases/latest) — DMGs for Apple Silicon and Intel Macs.
+[**Latest release**](https://github.com/eskilxu/agentic-mindmap/releases/latest) — DMGs for Apple Silicon and Intel Macs.
 
 ```bash
 # First launch needs Gatekeeper bypass (DMG is unsigned):
@@ -34,7 +34,7 @@ xattr -cr "/Applications/Agentic Mindmap.app"
 ### Build from source (developers)
 
 ```bash
-git clone https://github.com/Eskilnhisagentfrens/agentic-mindmap.git
+git clone https://github.com/eskilxu/agentic-mindmap.git
 cd agentic-mindmap
 npm install      # first time
 npm start        # launch
@@ -263,7 +263,7 @@ The Electron app writes a snapshot of the current mindmap to `~/Library/Applicat
 This repo ships as a self-contained Claude Code plugin. Installing it wires up the MCP server **and** an `agentic-mindmap` skill that teaches Claude when to use the tools.
 
 ```
-/plugin install Eskilnhisagentfrens/agentic-mindmap
+/plugin install eskilxu/agentic-mindmap
 ```
 
 After install, ask Claude any of:
