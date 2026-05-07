@@ -67,7 +67,7 @@ I spent four years at GoPlus Security building defensive infrastructure for Web3
 
 Anthropic's [Constitutional AI methodology](https://www.anthropic.com/constitution) is the most serious public attempt I've seen to address this gap at the model level. `agentic-mindmap` is my attempt to address it at the *workflow* level — for a single human reading a single document with a single LLM. The two should compose.
 
-I work in [Vitalik Buterin's d/acc framework](https://vitalik.eth.limo/general/2023/11/27/techno_optimism.html) — differentially accelerate the defensive, decentralized, and accessible. A tool that helps non-engineers think more carefully with LLMs is, in a small way, defensive infrastructure.
+A tool that helps non-engineers think more carefully with LLMs is, in a small way, defensive infrastructure.
 
 ---
 
@@ -220,4 +220,4 @@ MIT — see [LICENSE](./LICENSE).
 
 ---
 
-*Built with Claude Code by [Eskil (Yufeng Xu)](https://github.com/EskilXu). Part of the d/acc — defensive, decentralized, accessible — building thread.*
+*Built with Claude Code by [Eskil (Yufeng Xu)](https://github.com/EskilXu).*
