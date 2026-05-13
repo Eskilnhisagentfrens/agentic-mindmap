@@ -1,8 +1,14 @@
 // Pure helpers for the Agentic Mindmap MCP server. Lives in its own module so
 // it can be unit-tested without spawning the stdio server.
+//
+// `findNode` / `countNodes` are re-exported from ../lib/tree.js so the MCP
+// server and the renderer share one source of truth for tree walks (the
+// shapes are identical). MCP-specific output formats (trimTree / searchTree)
+// stay here.
 
 const path = require('path');
 const os = require('os');
+const { findNode, countNodes } = require('../lib/tree.js');
 
 const PRODUCT_NAME = 'Agentic Mindmap';
 
@@ -34,16 +40,6 @@ function defaultControlPath() {
   return path.join(xdg, PRODUCT_NAME, 'mcp-control.json');
 }
 
-function findNode(node, id) {
-  if (!node) return null;
-  if (node.id === id) return node;
-  for (const c of node.children || []) {
-    const hit = findNode(c, id);
-    if (hit) return hit;
-  }
-  return null;
-}
-
 function trimTree(node, maxDepth, includeNotes, depth = 0) {
   const out = { id: node.id, text: node.text };
   if (node.icon) out.icon = node.icon;
@@ -52,13 +48,6 @@ function trimTree(node, maxDepth, includeNotes, depth = 0) {
     out.children = node.children.map(c => trimTree(c, maxDepth, includeNotes, depth + 1));
   }
   return out;
-}
-
-function countNodes(node) {
-  if (!node) return 0;
-  let n = 1;
-  for (const c of node.children || []) n += countNodes(c);
-  return n;
 }
 
 function searchTree(root, query, limit, includeNotes) {

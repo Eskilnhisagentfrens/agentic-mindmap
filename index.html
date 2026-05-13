@@ -498,7 +498,8 @@
   </div>
 </div>
 
-<!-- Pure helpers, also unit-tested under test/unit/. window.AgenticDrag is set when this loads. -->
+<!-- Pure helpers, also unit-tested under test/unit/. Sets window.AgenticTree / window.AgenticDrag. -->
+<script src="./lib/tree.js"></script>
 <script src="./lib/drag.js"></script>
 
 <script>
@@ -610,13 +611,10 @@ function setNodeScale(s) {
 // =========================================================================
 //  Tree helpers
 // =========================================================================
-function findNode(id, node = state.root, parent = null) {
-  if (node.id === id) return { node, parent };
-  for (const c of node.children) {
-    const r = findNode(id, c, node);
-    if (r) return r;
-  }
-  return null;
+// Renderer wrapper around lib/tree.js's findNodeWithParent — preserves the
+// existing call sites that pass just an id and assume state.root.
+function findNode(id) {
+  return window.AgenticTree.findNodeWithParent(state.root, id);
 }
 function getSelected() {
   return state.selectedId ? findNode(state.selectedId) : null;
@@ -1148,19 +1146,9 @@ function addChild() {
 }
 
 // Build the path from root to the given node id, as an array of texts.
+// Delegates to lib/tree.js — same source of truth as the MCP server.
 function pathToNode(targetId) {
-  const path = [];
-  function walk(node) {
-    if (node.id === targetId) { path.push(node.text); return true; }
-    path.push(node.text);
-    for (const c of node.children || []) {
-      if (walk(c)) return true;
-    }
-    path.pop();
-    return false;
-  }
-  walk(state.root);
-  return path;
+  return window.AgenticTree.pathToNode(state.root, targetId);
 }
 
 let aiExpandInFlight = false;
@@ -2865,22 +2853,11 @@ function toast(msg, durationMs) {
 //  user can hit ⌘Z to undo any Claude-driven change exactly like a manual one.
 // =========================================================================
 
-function findNodeWithParent(root, id, parent = null) {
-  if (!root) return null;
-  if (root.id === id) return { node: root, parent };
-  for (const c of root.children || []) {
-    const hit = findNodeWithParent(c, id, root);
-    if (hit) return hit;
-  }
-  return null;
-}
-
-function countSubtree(n) {
-  if (!n) return 0;
-  let c = 1;
-  for (const k of n.children || []) c += countSubtree(k);
-  return c;
-}
+// Thin aliases over lib/tree.js so the MCP mutation handlers below read
+// naturally with explicit tree+id args. Behaviour identical to renderer's
+// findNode() above (and to mcp/server.js's findNode) — one source of truth.
+const findNodeWithParent = (root, id) => window.AgenticTree.findNodeWithParent(root, id);
+const countSubtree       = (n)       => window.AgenticTree.countNodes(n);
 
 function summarizeNode(n) {
   return { id: n.id, text: n.text, hasChildren: !!(n.children && n.children.length) };
